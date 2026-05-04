@@ -1,9 +1,9 @@
-@tag
+@loginPage
 Feature: Login functionality
   I want to use this template for my feature file
 
-  @tag1 @regression @dataFile:env/{env}/data/loginData.json
-  Scenario Outline: Title of your scenario outline
+  @loginPage01 @regression @dataFile:env/{env}/data/loginData.json
+  Scenario: Title of your scenario outline
     Given user is on the login page
     When user enters username "${username}" and "${password}" from data file
     And user clicks login button

@@ -112,14 +112,52 @@ public class Hooks {
 	 * Order 0 (After): Close browser after scenario execution
 	 * All iteration handling is done within step definitions using recursive
 	 * looping
+	 * 
+	 * NOTE: During data-driven looping, restartBrowser() already closes the page.
+	 * This hook adds null checks to handle already-closed resources gracefully.
 	 */
 	@After(order = 0)
 	public void quitBrowser(Scenario scenario) {
-		DriverFactory.getPage().close();
-		DriverFactory.getContext().close();
-		DriverFactory.getBrowser().close();
-		DriverFactory.getPlaywright().close();
+		try {
+			// Close page if it exists
+			if (DriverFactory.getPage() != null) {
+				DriverFactory.getPage().close();
+				System.out.println(">>> Page closed");
+			}
+		} catch (Exception e) {
+			System.out.println(">>> Page already closed or error: " + e.getMessage());
+		}
 
-		System.out.println("\n>>> Scenario completed and browser closed");
+		try {
+			// Close context if it exists
+			if (DriverFactory.getContext() != null) {
+				DriverFactory.getContext().close();
+				System.out.println(">>> Context closed");
+			}
+		} catch (Exception e) {
+			System.out.println(">>> Context already closed or error: " + e.getMessage());
+		}
+
+		try {
+			// Close browser if it exists
+			if (DriverFactory.getBrowser() != null) {
+				DriverFactory.getBrowser().close();
+				System.out.println(">>> Browser closed");
+			}
+		} catch (Exception e) {
+			System.out.println(">>> Browser already closed or error: " + e.getMessage());
+		}
+
+		try {
+			// Close playwright if it exists
+			if (DriverFactory.getPlaywright() != null) {
+				DriverFactory.getPlaywright().close();
+				System.out.println(">>> Playwright closed");
+			}
+		} catch (Exception e) {
+			System.out.println(">>> Playwright already closed or error: " + e.getMessage());
+		}
+
+		System.out.println("\n>>> Scenario completed and browser cleanup finished");
 	}
 }

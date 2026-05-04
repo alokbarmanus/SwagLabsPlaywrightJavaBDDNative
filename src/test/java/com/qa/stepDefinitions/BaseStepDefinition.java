@@ -79,11 +79,12 @@ public abstract class BaseStepDefinition {
      * Works with any page object class that has a constructor accepting Page object
      * 
      * Usage:
-     *   loginPageObjects = initializePage(LoginPageObjects.class);
-     *   productPageObjects = initializePage(ProductPageObjects.class);
-     *   cartPageObjects = initializePage(CartPageObjects.class);
+     * loginPageObjects = initializePage(LoginPageObjects.class);
+     * productPageObjects = initializePage(ProductPageObjects.class);
+     * cartPageObjects = initializePage(CartPageObjects.class);
      * 
-     * @param <T> - Page object type (must extend BasePage and have Page constructor)
+     * @param <T>       - Page object type (must extend BasePage and have Page
+     *                  constructor)
      * @param pageClass - The page object class to instantiate
      * @return Initialized page object with current Playwright Page
      * @throws RuntimeException if page object cannot be instantiated
@@ -94,8 +95,9 @@ public abstract class BaseStepDefinition {
                     .newInstance(DriverFactory.getPage());
         } catch (Exception e) {
             throw new RuntimeException(
-                    "Failed to initialize page object: " + pageClass.getName() 
-                    + ". Ensure it has a constructor that accepts Page parameter.", e);
+                    "Failed to initialize page object: " + pageClass.getName()
+                            + ". Ensure it has a constructor that accepts Page parameter.",
+                    e);
         }
     }
 
@@ -106,10 +108,39 @@ public abstract class BaseStepDefinition {
      */
     protected void restartBrowser() {
         System.out.println("    > Closing browser after iteration...");
-        DriverFactory.getPage().close();
-        DriverFactory.getContext().close();
-        DriverFactory.getBrowser().close();
-        DriverFactory.getPlaywright().close();
+
+        try {
+            if (DriverFactory.getPage() != null) {
+                DriverFactory.getPage().close();
+            }
+        } catch (Exception e) {
+            System.out.println("    > Page already closed: " + e.getMessage());
+        }
+
+        try {
+            if (DriverFactory.getContext() != null) {
+                DriverFactory.getContext().close();
+            }
+        } catch (Exception e) {
+            System.out.println("    > Context already closed: " + e.getMessage());
+        }
+
+        try {
+            if (DriverFactory.getBrowser() != null) {
+                DriverFactory.getBrowser().close();
+            }
+        } catch (Exception e) {
+            System.out.println("    > Browser already closed: " + e.getMessage());
+        }
+
+        try {
+            if (DriverFactory.getPlaywright() != null) {
+                DriverFactory.getPlaywright().close();
+            }
+        } catch (Exception e) {
+            System.out.println("    > Playwright already closed: " + e.getMessage());
+        }
+
         System.out.println("    > Browser terminated successfully");
 
         // Relaunch browser for next iteration

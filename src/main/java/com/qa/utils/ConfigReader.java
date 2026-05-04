@@ -35,6 +35,14 @@ public class ConfigReader {
 					prop.load(ipEnv);
 				}
 			}
+
+			// Override with Maven system properties (e.g., -Dexecution.headless=true)
+			// This ensures CLI parameters take precedence over file-based properties
+			String headlessProperty = System.getProperty("execution.headless");
+			if (headlessProperty != null) {
+				System.out.println("Overriding execution.headless from Maven: " + headlessProperty);
+				prop.setProperty("execution.headless", headlessProperty);
+			}
 		} catch (IOException e) {
 			System.out.println("ConfigReader: Error loading properties. Using defaults. " + e.getMessage());
 			e.printStackTrace();
