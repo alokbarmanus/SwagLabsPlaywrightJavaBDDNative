@@ -40,7 +40,7 @@ jobs:
         cache-dependency-path: pom.xml
 
     - name: Build project
-      run: mvn clean install -DskipTests -Denv=dev
+      run: mvn clean install -DskipTests -Denv=dev -Dexecution.headless=true
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
@@ -69,12 +69,31 @@ jobs:
         name: build-artifacts
         path: target/
 
-    # IMPORTANT: Playwright needs its browsers installed on the GitHub runner
+    # Install system dependencies required by Playwright
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libnss3 \
+          libnspr4 \
+          libatk1.0-0 \
+          libatk-bridge2.0-0 \
+          libcups2 \
+          libxkbcommon0 \
+          libxdamage1 \
+          libpango-1.0-0 \
+          libpangocairo-1.0-0 \
+          libcairo2 \
+          xdg-utils \
+          wget
+
+    # Install Playwright browsers using npx (more reliable)
     - name: Install Playwright Browsers
-      run: mvn exec:java -e -D exec.mainClass=com.microsoft.playwright.CLI -D exec.args="install --with-deps"
+      run: |
+        npx -y playwright install chromium firefox webkit --with-deps
 
     - name: Run tests on dev environment
-      run: mvn test -Denv=dev
+      run: mvn test -Denv=dev -Dexecution.headless=true
       continue-on-error: true # Ensures reports are uploaded even if tests fail
     
     - name: Upload Cucumber reports

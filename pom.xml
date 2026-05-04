@@ -17,6 +17,8 @@
 		<jackson.version>2.15.2</jackson.version>
 		<!-- Default environment - can be overridden via -Denv=dev/sit/uat -->
 		<env>dev</env>
+		<!-- Default headless mode - set to false for local development (headed mode), true for CI -->
+		<execution.headless>false</execution.headless>
 	</properties>
 
 	<dependencies>
