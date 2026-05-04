@@ -1,11 +1,5 @@
 # Maven
 target/
-pom.xml.tag
-pom.xml.releaseBackup
-pom.xml.versionsBackup
-pom.xml.next
-pom.xml.bak
-release.properties
 dependency-reduced-pom.xml
 .flattened-pom.xml
 
@@ -28,7 +22,6 @@ bin/
 out/
 
 # IDE - VS Code
-.vscode/
 *.code-workspace
 
 # IDE - NetBeans
@@ -44,7 +37,6 @@ nbproject/
 test-output/
 cucumber-reports.html
 testng-cucumber-reports.html
-testng-cucumber-reports.xml
 **/.allure/
 
 # Playwright
@@ -80,7 +72,6 @@ package-lock.json
 
 # Gradle (if applicable)
 .gradle/
-gradle/
 
 # Temporary files
 *.tmp
@@ -112,6 +103,3 @@ reports/
 # Misc
 .history/
 .venv/
-venv/
-ENV/
-env/
