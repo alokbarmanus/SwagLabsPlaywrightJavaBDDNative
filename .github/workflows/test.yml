@@ -121,9 +121,17 @@ jobs:
         name: testng-reports
         path: test-output/
     
-    - name: Publish test results
+    - name: Create Test Results Summary
       if: always()
-      uses: EnricoMi/publish-unit-test-result-action@v2
-      with:
-        files: target/testng-cucumber-reports.xml
-        check_name: Test Results - Dev Environment
+      run: |
+        echo "## Test Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "📊 **Test Reports Available in Artifacts:**" >> $GITHUB_STEP_SUMMARY
+        echo "- **Cucumber Report**: Download 'cucumber-reports'" >> $GITHUB_STEP_SUMMARY
+        echo "- **TestNG Report**: Download 'testng-reports' (open index.html)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ -f "target/testng-cucumber-reports.xml" ]; then
+          echo "✅ Test Report Generated: $(date)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ Test Report Not Found" >> $GITHUB_STEP_SUMMARY
+        fi
