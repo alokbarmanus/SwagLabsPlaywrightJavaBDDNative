@@ -1,0 +1,406 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║          JSON DATA-DRIVEN TESTING - VISUAL REFERENCE GUIDE                  ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+1. CLASS RELATIONSHIPS & DATA FLOW
+═══════════════════════════════════
+
+                    ┌─────────────────────┐
+                    │  Feature File       │
+                    │  @dataFile tag ────┐│
+                    └─────────────────────┘│
+                                          │
+                                          ▼
+                    ┌──────────────────────────────┐
+                    │   Hooks.java                 │
+                    │  ┌──────────────────────┐    │
+                    │  │ readJsonDataFile()   │    │
+                    │  │ - Reads @dataFile    │    │
+                    │  │ - Calls JsonReader   │    │
+                    │  │ - Sets data to       │    │
+                    │  │   ScenarioContext    │    │
+                    │  └──────────────────────┘    │
+                    └──────────────┬───────────────┘
+                                   │
+                 ┌─────────────────┴──────────────────┐
+                 │                                    │
+                 ▼                                    ▼
+    ┌──────────────────────────┐      ┌────────────────────────────┐
+    │  JsonDataReader          │      │  ScenarioContext           │
+    │  ┌────────────────────┐  │      │  ┌──────────────────────┐  │
+    │  │ Reads JSON file    │  │      │  │ Stores current data: │  │
+    │  │ Parses with        │  │      │  │ - testData (Map)     │  │
+    │  │ Jackson library    │  │      │  │ - currentIndex (int) │  │
+    │  │ Returns List<Map>  │  │      │  │ - totalRecords (int) │  │
+    │  └────────────────────┘  │      │  │                      │  │
+    └──────────────────────────┘      │  │ Injected to both:    │  │
+                                       │  │ - Hooks              │  │
+                                       │  │ - Step Definitions   │  │
+                                       │  └──────────────────────┘  │
+                                       └────────────────────────────┘
+                                                     │
+                                                     ▼
+                                       ┌────────────────────────────┐
+                                       │  Step Definitions          │
+                                       │  LoginPageStepDefs.java    │
+                                       │  ┌──────────────────────┐  │
+                                       │  │ Gets data from       │  │
+                                       │  │ ScenarioContext:     │  │
+                                       │  │ - username           │  │
+                                       │  │ - password           │  │
+                                       │  │ - address (nested)   │  │
+                                       │  │                      │  │
+                                       │  │ Uses in steps:       │  │
+                                       │  │ - fillUsername()     │  │
+                                       │  │ - fillPassword()     │  │
+                                       │  │ - printAddress()     │  │
+                                       │  └──────────────────────┘  │
+                                       └────────────────────────────┘
+
+
+2. DATA TRANSFORMATION PIPELINE
+═════════════════════════════════
+
+Input JSON File:
+├─ Format: Array of objects [ {...}, {...} ]
+├─ Structure: Simple fields + nested objects
+└─ Location: src/test/resources/env/{env}/data/loginData.json
+
+                              │
+                              ▼
+JsonDataReader reads and parses:
+├─ Converts to Jackson JsonNode
+├─ Transforms to List<Map<String, Object>>
+│  ├─ Record 1: {username: "user1", address: {city: "City1"}}
+│  └─ Record 2: {username: "user2", address: {city: "City2"}}
+└─ Returns for iteration
+
+                              │
+                              ▼
+ScenarioContext stores:
+├─ Current iteration: testData (Map)
+│  └─ {username: "user1", password: "pass1", address: {...}}
+├─ Position: currentDataIndex = 0
+├─ Total: totalDataRecords = 2
+└─ Available to all step definitions
+
+                              │
+                              ▼
+Step Definitions consume:
+├─ Get testData: Map data = context.getTestData()
+├─ Access simple: String user = (String) data.get("username")
+├─ Access nested: Map addr = (Map) data.get("address")
+│                 String city = (String) addr.get("city")
+└─ Use in test actions: enterUsername(user), enterPassword(pass)
+
+
+3. OBJECT ACCESS PATTERNS
+═══════════════════════════
+
+Pattern 1: Direct Field Access
+─────────────────────────────
+    Map<String, Object> testData = scenarioContext.getTestData();
+    String username = (String) testData.get("username");
+    String password = (String) testData.get("password");
+
+Pattern 2: Nested Object Access
+────────────────────────────────
+    Map<String, Object> testData = scenarioContext.getTestData();
+    Map<String, Object> address = (Map) testData.get("address");
+    String street = (String) address.get("street");
+    String city = (String) address.get("city");
+
+Pattern 3: Dot Notation (Shortcut)
+──────────────────────────────────
+    String city = (String) scenarioContext.getTestDataValue("address.city");
+    String state = (String) scenarioContext.getTestDataValue("address.state");
+
+Pattern 4: Iteration Information
+─────────────────────────────────
+    int current = scenarioContext.getCurrentDataIndex();      // 0, 1, 2...
+    int total = scenarioContext.getTotalDataRecords();         // 2
+    boolean last = scenarioContext.isLastRecord();             // true/false
+    System.out.println("Iteration " + (current+1) + "/" + total);
+
+
+4. HOOK EXECUTION SEQUENCE (IMPORTANT!)
+════════════════════════════════════════
+
+     ITERATION 1           ITERATION 2           ITERATION 3
+     ───────────           ───────────           ───────────
+
+┌────────────────────────────────────────────────────────────────────────┐
+│ @Before(order=0): getProperty()  [RUNS EACH TIME]                     │
+│ Loads application.properties                                           │
+└────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────┐
+│ @Before(order=1): readJsonDataFile(Scenario)  [CHECKS TAG EACH TIME]  │
+│ ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                 │
+│ │ Has @dataFile│  │ Has @dataFile│  │ Has @dataFile│                 │
+│ │ tag? YES     │  │ tag? YES     │  │ tag? YES     │                 │
+│ │              │  │              │  │              │                 │
+│ │ Read JSON    │  │ Read JSON    │  │ Read JSON    │                 │
+│ │ File loaded  │  │ File loaded  │  │ File loaded  │                 │
+│ │ already      │  │ already      │  │ already      │                 │
+│ │              │  │              │  │              │                 │
+│ │ Set Record 1 │  │ Set Record 2 │  │ Set Record 3 │                 │
+│ │ Index = 0    │  │ Index = 1    │  │ Index = 2    │                 │
+│ │ Total = 3    │  │ Total = 3    │  │ Total = 3    │                 │
+│ └──────────────┘  └──────────────┘  └──────────────┘                 │
+└────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────┐
+│ @Before(order=2): launchBrowser()  [RUNS EACH TIME]                   │
+│ Initializes fresh Playwright browser/page/context                      │
+└────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────┐
+│ SCENARIO STEPS EXECUTE                                                  │
+│ Steps read testData from context                                        │
+│ Each iteration uses different data                                      │
+└────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────┐
+│ @After(order=0): quitBrowser(Scenario)  [RUNS EACH TIME]              │
+│ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐           │
+│ │ Close browser   │ │ Close browser   │ │ Close browser   │           │
+│ │                 │ │                 │ │                 │           │
+│ │ Check more?     │ │ Check more?     │ │ Check more?     │           │
+│ │ 1 < 3? YES      │ │ 2 < 3? YES      │ │ 3 < 3? NO       │           │
+│ │                 │ │                 │ │                 │           │
+│ │ Set Record 2    │ │ Set Record 3    │ │ Clear context   │           │
+│ │ Re-run scenario │ │ Re-run scenario │ │ End testing     │           │
+│ └─────────────────┘ └─────────────────┘ └─────────────────┘           │
+└────────────────────────────────────────────────────────────────────────┘
+
+
+5. JSON STRUCTURE EXAMPLES
+═══════════════════════════
+
+SIMPLE (Fields only)
+─────────────────────
+[
+  {
+    "username": "user1",
+    "password": "pass1"
+  }
+]
+
+Access: testData.get("username") → "user1"
+
+
+NESTED (Objects within objects)
+────────────────────────────────
+[
+  {
+    "username": "user1",
+    "address": {
+      "street": "123 St",
+      "city": "Boston"
+    }
+  }
+]
+
+Access simple: testData.get("username") → "user1"
+Access nested: ((Map) testData.get("address")).get("city") → "Boston"
+Access via dot: scenarioContext.getTestDataValue("address.city") → "Boston"
+
+
+WITH ARRAYS
+───────────
+[
+  {
+    "username": "user1",
+    "permissions": ["read", "write"]
+  }
+]
+
+Access: ((List) testData.get("permissions")).get(0) → "read"
+
+
+COMPLEX (Mixed structure)
+──────────────────────────
+[
+  {
+    "username": "user1",
+    "credentials": {
+      "email": "user@test.com",
+      "auth": {
+        "secret": "xyz123"
+      }
+    },
+    "roles": ["admin", "user"]
+  }
+]
+
+Access levels:
+  Level 1: testData.get("username") → "user1"
+  Level 2: ((Map) testData.get("credentials")).get("email") → "user@test.com"
+  Level 3: ((Map) ((Map) testData.get("credentials")).get("auth")).get("secret") → "xyz123"
+  Array: ((List) testData.get("roles")).get(0) → "admin"
+
+Using dot notation (easier):
+  scenarioContext.getTestDataValue("credentials.email") → "user@test.com"
+  scenarioContext.getTestDataValue("credentials.auth.secret") → "xyz123"
+
+
+6. TESTING STRATEGIES
+══════════════════════
+
+Strategy 1: PARAMETRIZED TESTING (Current)
+───────────────────────────────────────────
+├─ One scenario with multiple data sets
+├─ Scenario runs for each JSON record
+├─ Same test logic, different data
+├─ Good for: "Test login with different users"
+└─ Time: Fast (1 browser init per record)
+
+Strategy 2: CROSS-PRODUCT TESTING
+─────────────────────────────────
+├─ Multiple JSON files, one for each dimension
+├─ Run all combinations
+├─ Example: (2 users) × (3 environments) = 6 runs
+└─ Extension: Would need nested loops in hooks
+
+Strategy 3: DATA-DEPENDENT CHAINING
+──────────────────────────────────
+├─ Later scenarios use output from earlier scenarios
+├─ Store results in ScenarioContext
+├─ Example: Create user → Login with new user → Verify profile
+└─ Extension: Pass context between scenarios
+
+
+7. PERFORMANCE CONSIDERATIONS
+═════════════════════════════════
+
+With 2 JSON records (current):
+├─ Browser launches: 2 times
+├─ Page loads: 2 times
+├─ Steps execute: 2 times
+├─ Total time: ~20-30 sec (depends on app)
+
+With 10 JSON records:
+├─ Browser launches: 10 times
+├─ Page loads: 10 times
+├─ Steps execute: 10 times
+├─ Total time: ~100-150 sec
+
+Optimization tips:
+├─ Run in parallel: Use Cucumber parallel plugin
+├─ Cache data: Store frequently accessed values
+├─ Headless mode: Set Playwright to headless (faster)
+├─ Selective records: Use Scenario.isScenarioOutline() to filter
+└─ Sample data: Test with subset, scale up for regression
+
+
+8. TROUBLESHOOTING DECISION TREE
+═════════════════════════════════
+
+❓ ScenarioContext is null
+   └─ Did you use constructor injection?
+      ├─ NO → Add constructor: public Steps(ScenarioContext ctx)
+      └─ YES → Is it the same ScenarioContext instance?
+              └─ Check if injected in both Hooks and Steps
+
+❓ JSON file not found
+   └─ Check file path
+      ├─ @dataFile tag present? @dataFile:env/{env}/data/loginData.json
+      ├─ File exists? src/test/resources/env/dev/data/loginData.json
+      ├─ {env} resolved? Check application.properties for env value
+      └─ Absolute path? Logs should show full path
+
+❓ Only first record runs
+   └─ Check @After hook
+      ├─ Has @After(order=0)? Should close browser and check for more
+      ├─ testDataList not null? Read JSON successfully?
+      ├─ Check log: "Prepared next test data" should appear
+      └─ Scenario re-running? Watch console for iteration logs
+
+❓ Data is null/wrong
+   └─ Check ScenarioContext data
+      ├─ Is testData set? Add context.printContextData()
+      ├─ Correct field name? JSON field names are case-sensitive
+      ├─ Nested access? Use ((Map) data.get("parent")).get("child")
+      └─ Index correct? getCurrentDataIndex() should match data
+
+❓ Nested object returns null
+   └─ Check object structure
+      ├─ Is parent object a Map? Cast to Map before accessing
+      ├─ Field name exact? Check JSON for typos
+      ├─ Null check? Add if (addressObj instanceof Map)
+      └─ Print context? Use printContextData() for debugging
+
+
+9. MIGRATION CHECKLIST - FROM HARDCODED TO DATA-DRIVEN
+══════════════════════════════════════════════════════
+
+Step 1: Add @dataFile tag to feature
+  ☐ @dataFile:env/{env}/data/loginData.json
+
+Step 2: Create JSON data file
+  ☐ Location: src/test/resources/env/{env}/data/loginData.json
+  ☐ Format: Array of objects
+  ☐ Fields match your step parameters
+
+Step 3: Inject ScenarioContext
+  ☐ In Hooks: public Hooks(ScenarioContext ctx)
+  ☐ In StepDefs: public StepDefs(ScenarioContext ctx)
+
+Step 4: Read JSON in hooks
+  ☐ Hook already implements this
+  ☐ Just ensure @dataFile tag is present
+
+Step 5: Update step definitions
+  ☐ Replace parameter values with context reads
+  ☐ Change: loginPageObjects.enterUsername(username)
+  ☐ To: String username = (String) testData.get("username")
+  ☐      loginPageObjects.enterUsername(username)
+
+Step 6: Test
+  ☐ mvn test
+  ☐ Check logs for multiple iterations
+  ☐ Verify each iteration uses different data
+
+
+10. COMMON MISTAKES & HOW TO AVOID
+═══════════════════════════════════
+
+❌ MISTAKE: Creating ScenarioContext with 'new'
+✅ CORRECT: Inject via constructor parameter
+           Cucumber will provide the instance
+
+❌ MISTAKE: Hardcoding field names in steps
+✅ CORRECT: Use dynamic access: testData.get("username")
+           Makes it easy to change JSON structure
+
+❌ MISTAKE: Forgetting @dataFile tag
+✅ CORRECT: Add tag to feature file
+           Without it, scenario won't read JSON
+
+❌ MISTAKE: JSON not in array format [ ]
+✅ CORRECT: Wrap objects in square brackets
+           [{ }, { }] not { }, { }
+
+❌ MISTAKE: Not handling nested objects as Map
+✅ CORRECT: Cast nested objects: Map addr = (Map) data.get("address")
+           Then: addr.get("field")
+
+❌ MISTAKE: Wrong environment in application.properties
+✅ CORRECT: Ensure env=dev/sit/uat matches folder structure
+           {env} is replaced with this value
+
+❌ MISTAKE: Assuming field order in JSON
+✅ CORRECT: Always use field names: testData.get("username")
+           Never rely on index order
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+For detailed explanations and more examples, see:
+├─ IMPLEMENTATION_SUMMARY.txt (500+ lines, detailed overview)
+├─ JSON_DATA_DRIVEN_TESTING_GUIDE.txt (600+ lines, comprehensive guide)
+└─ QUICK_START.txt (100+ lines, quick code examples)
+
+═════════════════════════════════════════════════════════════════════════════

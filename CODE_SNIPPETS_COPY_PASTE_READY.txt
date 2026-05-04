@@ -1,0 +1,591 @@
+================================================================================
+CODE SNIPPETS - COPY & PASTE READY
+================================================================================
+
+Ready-to-use code examples for your data-driven looping implementation
+═════════════════════════════════════════════════════════════════════════════
+
+
+SECTION 1: ScenarioContext.java - REQUIRED METHODS
+═════════════════════════════════════════════════════════════════════════════
+
+These methods are ALREADY in your ScenarioContext.java file.
+Reference them here if you need to understand what they do.
+
+─────────────────────────────────────────────────────────────────────────────
+METHOD 1: Check if more records exist
+─────────────────────────────────────────────────────────────────────────────
+
+public boolean hasMoreRecords() {
+    return currentDataIndex + 1 < totalDataRecords;
+}
+
+Usage:
+  if (scenarioContext.hasMoreRecords()) {
+      // More records to process
+  }
+
+
+─────────────────────────────────────────────────────────────────────────────
+METHOD 2: Move to the next record
+─────────────────────────────────────────────────────────────────────────────
+
+public boolean moveToNextRecord() {
+    if (hasMoreRecords()) {
+        currentDataIndex++;
+        if (testDataList != null && currentDataIndex < testDataList.size()) {
+            this.testData = testDataList.get(currentDataIndex);
+            return true;
+        }
+    }
+    return false;
+}
+
+Usage:
+  scenarioContext.moveToNextRecord();
+  // Now scenarioContext.getTestData() returns the new record
+
+
+─────────────────────────────────────────────────────────────────────────────
+METHOD 3: Get current record data
+─────────────────────────────────────────────────────────────────────────────
+
+public Map<String, Object> getTestData() {
+    return testData;
+}
+
+Usage:
+  Map<String, Object> data = scenarioContext.getTestData();
+  String username = (String) data.get("username");
+
+
+─────────────────────────────────────────────────────────────────────────────
+METHOD 4: Get all records (for info/debug)
+─────────────────────────────────────────────────────────────────────────────
+
+public List<Map<String, Object>> getTestDataList() {
+    return testDataList;
+}
+
+Usage:
+  int totalCount = scenarioContext.getTestDataList().size();
+
+
+─────────────────────────────────────────────────────────────────────────────
+METHOD 5: Get current position
+─────────────────────────────────────────────────────────────────────────────
+
+public int getCurrentDataIndex() {
+    return currentDataIndex;
+}
+
+Usage:
+  int currentIndex = scenarioContext.getCurrentDataIndex();
+  int totalRecords = scenarioContext.getTotalDataRecords();
+  System.out.println("Iteration " + (currentIndex + 1) + "/" + totalRecords);
+
+
+SECTION 2: LoginPageStepDefs.java - THE LOOPING LOGIC
+═════════════════════════════════════════════════════════════════════════════
+
+─────────────────────────────────────────────────────────────────────────────
+PART 1: Add instance variable to track first iteration
+─────────────────────────────────────────────────────────────────────────────
+
+Add this field to the class:
+
+public class LoginPageStepDefs {
+    public LoginPageObjects loginPageObjects;
+    private ScenarioContext scenarioContext;
+    private boolean isFirstIteration = true;  // ← ADD THIS
+
+
+─────────────────────────────────────────────────────────────────────────────
+PART 2: The @Given step (modified for first iteration tracking)
+─────────────────────────────────────────────────────────────────────────────
+
+@Given("user is on the login page")
+public void user_is_on_the_login_page() {
+    int totalRecords = scenarioContext.getTotalDataRecords();
+    int currentIndex = scenarioContext.getCurrentDataIndex();
+
+    System.out.println(
+        "\n>>> [Iteration " + (currentIndex + 1) + "/" + totalRecords + 
+        "] User is on the login page");
+
+    if (isFirstIteration) {
+        isFirstIteration = false;
+        // Launch app only for first iteration
+        loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+        loginPageObjects.launchApplication();
+    } else {
+        // For subsequent iterations, app is already open
+        System.out.println("    > Moving to next data record...");
+    }
+}
+
+
+─────────────────────────────────────────────────────────────────────────────
+PART 3: The @When step (unchanged, but note the comment)
+─────────────────────────────────────────────────────────────────────────────
+
+@When("user enters username {string} and {string} from data file")
+public void user_enters_username_and_from_data_file(String usernameField, String passwordField) {
+    loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+
+    // Get data from ScenarioContext (NOT from step parameters)
+    Map<String, Object> testData = scenarioContext.getTestData();
+
+    String username = (String) testData.get("username");
+    String password = (String) testData.get("password");
+
+    System.out.println("    > Entering username: " + username);
+    System.out.println("    > Entering password: " + password);
+
+    loginPageObjects.enterUsername(username);
+    loginPageObjects.enterPassword(password);
+    DriverFactory.getPage().waitForTimeout(5000);
+}
+
+
+─────────────────────────────────────────────────────────────────────────────
+PART 4: The @Then step (THIS IS WHERE LOOPING HAPPENS!)
+─────────────────────────────────────────────────────────────────────────────
+
+@Then("user should see the dashboard header text {string}")
+public void user_should_see_the_dashboard_header_text(String expectedHeader) {
+    loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+    String actualPageHeader = loginPageObjects.getDashboardPageHeader();
+    System.out.println("    > Dashboard header text: " + actualPageHeader);
+    assertThat(loginPageObjects.getDashboardPageHeaderLocator()).hasText(expectedHeader);
+    System.out.println("    > Assertion passed: Header contains '" + expectedHeader + "'");
+
+    // 🔑 THIS IS THE MAGIC - Check if more records to process
+    if (scenarioContext.hasMoreRecords()) {
+        System.out.println(
+            "\n>>> [Data-Driven Loop] More records found. Repeating scenario steps...");
+
+        // Advance to next record
+        scenarioContext.moveToNextRecord();
+
+        // Re-execute the step sequence for the next data record
+        executeScenarioForCurrentRecord(expectedHeader);
+    } else {
+        System.out.println("\n>>> All test data records have been processed successfully!");
+    }
+}
+
+
+─────────────────────────────────────────────────────────────────────────────
+PART 5: The helper method (recursive looping)
+─────────────────────────────────────────────────────────────────────────────
+
+private void executeScenarioForCurrentRecord(String expectedHeader) {
+    int currentIndex = scenarioContext.getCurrentDataIndex();
+    int totalRecords = scenarioContext.getTotalDataRecords();
+
+    System.out.println(
+        "\n>>> [Iteration " + (currentIndex + 1) + "/" + totalRecords + 
+        "] Processing next data record");
+
+    // 1. Reset application state by logging out
+    loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+    loginPageObjects.logout();
+
+    // 2. Re-execute the login steps for the new data
+    user_enters_username_and_from_data_file("username", "password");
+    user_clicks_login_button();
+
+    // 3. Verify the new user is logged in
+    loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+    String actualPageHeader = loginPageObjects.getDashboardPageHeader();
+    System.out.println("    > Dashboard header text: " + actualPageHeader);
+    assertThat(loginPageObjects.getDashboardPageHeaderLocator()).hasText(expectedHeader);
+    System.out.println("    > Assertion passed: Header contains '" + expectedHeader + "'");
+
+    // 4. Check again if there are more records (RECURSION!)
+    if (scenarioContext.hasMoreRecords()) {
+        System.out.println(
+            "\n>>> [Data-Driven Loop] More records found. Repeating scenario steps...");
+        scenarioContext.moveToNextRecord();
+        executeScenarioForCurrentRecord(expectedHeader);  // ← RECURSIVE CALL
+    } else {
+        System.out.println("\n>>> All test data records have been processed successfully!");
+    }
+}
+
+
+─────────────────────────────────────────────────────────────────────────────
+PART 6: Other step definitions (unchanged)
+─────────────────────────────────────────────────────────────────────────────
+
+@When("user clicks login button")
+public void user_clicks_login_button() {
+    loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+    System.out.println("    > Clicking login button");
+    loginPageObjects.clickOnLoginButton();
+}
+
+@Then("user print address information from {string} section of the data file")
+public void user_print_address_information_from_section_of_the_data_file(String addressField) {
+    Map<String, Object> testData = scenarioContext.getTestData();
+    Object addressObj = testData.get("address");
+
+    if (addressObj instanceof Map) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> addressMap = (Map<String, Object>) addressObj;
+
+        System.out.println("\n    === Address Information ===");
+        System.out.println("    Street: " + addressMap.get("street"));
+        System.out.println("    City: " + addressMap.get("city"));
+        System.out.println("    State: " + addressMap.get("state"));
+        System.out.println("    Zip: " + addressMap.get("zip"));
+        System.out.println("    ========================\n");
+    } else {
+        System.out.println("    > Address information not found in test data");
+    }
+}
+
+
+SECTION 3: LoginPageObjects.java - LOGOUT METHOD
+═════════════════════════════════════════════════════════════════════════════
+
+─────────────────────────────────────────────────────────────────────────────
+PART 1: Add locators for menu and logout
+─────────────────────────────────────────────────────────────────────────────
+
+Add these to your class field declarations:
+
+private final Locator menuBtn;
+private final Locator logoutBtn;
+
+
+─────────────────────────────────────────────────────────────────────────────
+PART 2: Initialize locators in constructor
+─────────────────────────────────────────────────────────────────────────────
+
+public LoginPageObjects(Page page) {
+    this.page = page;
+    this.usernameField = page.locator("#user-name");
+    this.passwordField = page.locator("#password");
+    this.loginBtn = page.locator("id=login-button");
+    this.dashboardPageHeader = page.locator(".title");
+    this.menuBtn = page.locator("#react-burger-menu-btn");        // ← ADD THIS
+    this.logoutBtn = page.locator("#logout_sidebar_link");        // ← ADD THIS
+}
+
+
+─────────────────────────────────────────────────────────────────────────────
+PART 3: Add logout method
+─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Logout from the application and return to login page
+ * Clicks the menu button, then the logout link
+ */
+public void logout() {
+    menuBtn.click();
+    logoutBtn.click();
+    // Wait for navigation back to login page
+    page.waitForURL(url -> url.toString().contains("saucedemo.com"));
+}
+
+
+SECTION 4: Hooks.java - DATA LOADING (ALREADY DONE)
+═════════════════════════════════════════════════════════════════════════════
+
+The @Before hook already reads JSON and stores all records in ScenarioContext.
+Nothing more needed here!
+
+Summary of what it does:
+
+@Before(order = 1)
+public void readJsonDataFile(Scenario scenario) {
+    // Check if JSON has already been read (skip if already loaded)
+    if (scenarioContext.hasTestDataList()) {
+        return;
+    }
+
+    // Extract @dataFile tag and read JSON
+    List<Map<String, Object>> testDataList = jsonDataReader.getDataAsListOfMaps();
+    
+    // Store ALL records in context
+    scenarioContext.setTestDataList(testDataList);
+    scenarioContext.setTotalDataRecords(testDataList.size());
+    scenarioContext.setCurrentDataIndex(0);
+    scenarioContext.setTestData(testDataList.get(0));
+}
+
+Result: ScenarioContext now has all data ready for looping!
+
+
+SECTION 5: JSON DATA FILE
+═════════════════════════════════════════════════════════════════════════════
+
+File location: src/test/resources/env/dev/data/loginData.json
+
+Simple 2-record example:
+──────────────────────
+
+[
+  {
+    "username": "standard_user",
+    "password": "secret_sauce",
+    "address": {
+      "street": "123 Main St",
+      "city": "Anytown",
+      "state": "CA",
+      "zip": "12345"
+    }
+  },
+  {
+    "username": "visual_user",
+    "password": "secret_sauce",
+    "address": {
+      "street": "456 Oak Ave",
+      "city": "Somewhere",
+      "state": "TX",
+      "zip": "67890"
+    }
+  }
+]
+
+Extended 5-record example:
+─────────────────────────
+
+[
+  {
+    "username": "user1",
+    "password": "pass1",
+    "address": { "street": "St 1", "city": "City 1", "state": "CA", "zip": "11111" }
+  },
+  {
+    "username": "user2",
+    "password": "pass2",
+    "address": { "street": "St 2", "city": "City 2", "state": "TX", "zip": "22222" }
+  },
+  {
+    "username": "user3",
+    "password": "pass3",
+    "address": { "street": "St 3", "city": "City 3", "state": "FL", "zip": "33333" }
+  },
+  {
+    "username": "user4",
+    "password": "pass4",
+    "address": { "street": "St 4", "city": "City 4", "state": "NY", "zip": "44444" }
+  },
+  {
+    "username": "user5",
+    "password": "pass5",
+    "address": { "street": "St 5", "city": "City 5", "state": "WA", "zip": "55555" }
+  }
+]
+
+Note: JSON MUST be an array! [{ }, { }, ...]
+
+
+SECTION 6: FEATURE FILE
+═════════════════════════════════════════════════════════════════════════════
+
+File location: src/test/resources/features/LoginPage.feature
+
+Keep your feature file as-is. The @dataFile tag tells Hooks where to load data.
+
+Example:
+────────
+
+@tag @tag1 @regression @dataFile:env/{env}/data/loginData.json
+Scenario Outline: Title of your scenario outline
+    Given user is on the login page
+    When user enters username "${username}" and "${password}" from data file
+    And user clicks login button
+    Then user should see the dashboard header text "Products"
+    And user print address information from "${address}" section of the data file
+
+Key points:
+  ✓ Use @dataFile:env/{env}/data/loginData.json tag
+  ✓ {env} gets replaced with environment (dev/sit/uat)
+  ✓ Step parameters like ${username} are placeholders
+  ✓ Actual data comes from JSON via ScenarioContext
+
+
+SECTION 7: COMMON MODIFICATIONS - COPY & PASTE
+═════════════════════════════════════════════════════════════════════════════
+
+─────────────────────────────────────────────────────────────────────────────
+MOD 1: Add delay between iterations (2 seconds)
+─────────────────────────────────────────────────────────────────────────────
+
+In executeScenarioForCurrentRecord():
+
+private void executeScenarioForCurrentRecord(String expectedHeader) {
+    // ... previous code ...
+    
+    loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+    loginPageObjects.logout();
+    
+    // ADD THIS: Wait 2 seconds before next iteration
+    System.out.println("    > Waiting 2 seconds before next iteration...");
+    DriverFactory.getPage().waitForTimeout(2000);
+    
+    user_enters_username_and_from_data_file("username", "password");
+    // ... rest of code ...
+}
+
+
+─────────────────────────────────────────────────────────────────────────────
+MOD 2: Log detailed iteration information
+─────────────────────────────────────────────────────────────────────────────
+
+In executeScenarioForCurrentRecord():
+
+private void executeScenarioForCurrentRecord(String expectedHeader) {
+    int currentIndex = scenarioContext.getCurrentDataIndex();
+    int totalRecords = scenarioContext.getTotalDataRecords();
+    Map<String, Object> currentData = scenarioContext.getTestData();
+    
+    // DETAILED LOGGING
+    System.out.println("\n═════════════════════════════════════════");
+    System.out.println("Iteration " + (currentIndex + 1) + "/" + totalRecords);
+    System.out.println("  Username: " + currentData.get("username"));
+    System.out.println("  Address: " + currentData.get("address"));
+    System.out.println("═════════════════════════════════════════");
+    
+    // ... rest of code ...
+}
+
+
+─────────────────────────────────────────────────────────────────────────────
+MOD 3: Only logout if not first iteration
+─────────────────────────────────────────────────────────────────────────────
+
+In executeScenarioForCurrentRecord():
+
+private void executeScenarioForCurrentRecord(String expectedHeader) {
+    // ... previous code ...
+    
+    loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+    
+    // Only logout if we've logged in before
+    if (scenarioContext.getCurrentDataIndex() > 0) {
+        loginPageObjects.logout();
+    }
+    
+    user_enters_username_and_from_data_file("username", "password");
+    // ... rest of code ...
+}
+
+
+─────────────────────────────────────────────────────────────────────────────
+MOD 4: Limit iterations to first 3 records only
+─────────────────────────────────────────────────────────────────────────────
+
+In executeScenarioForCurrentRecord():
+
+private void executeScenarioForCurrentRecord(String expectedHeader) {
+    int maxIterations = 3;
+    int currentIndex = scenarioContext.getCurrentDataIndex();
+    
+    // ... verify results ...
+    
+    // Check again if there are more records
+    if (currentIndex < maxIterations - 1 && scenarioContext.hasMoreRecords()) {
+        scenarioContext.moveToNextRecord();
+        executeScenarioForCurrentRecord(expectedHeader);
+    } else {
+        System.out.println(">>> Reached maximum iterations or all records processed!");
+    }
+}
+
+
+─────────────────────────────────────────────────────────────────────────────
+MOD 5: Skip certain records based on condition
+─────────────────────────────────────────────────────────────────────────────
+
+In executeScenarioForCurrentRecord():
+
+private void executeScenarioForCurrentRecord(String expectedHeader) {
+    Map<String, Object> currentData = scenarioContext.getTestData();
+    String userStatus = (String) currentData.get("status");  // if your JSON has status field
+    
+    // Skip inactive users
+    if ("inactive".equals(userStatus)) {
+        System.out.println(">>> Skipping inactive user: " + currentData.get("username"));
+        
+        if (scenarioContext.hasMoreRecords()) {
+            scenarioContext.moveToNextRecord();
+            executeScenarioForCurrentRecord(expectedHeader);
+        }
+        return;  // Skip this iteration
+    }
+    
+    // ... rest of code ...
+}
+
+
+─────────────────────────────────────────────────────────────────────────────
+MOD 6: Add screenshot on failure
+─────────────────────────────────────────────────────────────────────────────
+
+In executeScenarioForCurrentRecord():
+
+private void executeScenarioForCurrentRecord(String expectedHeader) {
+    try {
+        loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+        loginPageObjects.logout();
+        
+        user_enters_username_and_from_data_file("username", "password");
+        user_clicks_login_button();
+        
+        loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+        assertThat(loginPageObjects.getDashboardPageHeaderLocator())
+            .hasText(expectedHeader);
+        
+        System.out.println("✓ Iteration passed!");
+    } catch (AssertionError e) {
+        // Take screenshot on failure
+        String filePath = "failure_iteration_" + scenarioContext.getCurrentDataIndex() + ".png";
+        DriverFactory.getPage().screenshot(new Page.ScreenshotOptions().setPath(Paths.get(filePath)));
+        System.out.println("✗ Iteration failed! Screenshot saved: " + filePath);
+        throw e;  // Re-throw to stop execution
+    }
+    
+    // ... rest of code ...
+}
+
+
+RUNNING THE TESTS:
+═══════════════════════════════════════════════════════════════════════════
+
+mvn clean test -Denv=dev
+
+Expected Console Output:
+───────────────────────
+
+>>> [Iteration 1/2] User is on the login page
+    > Entering username: standard_user
+    > Entering password: secret_sauce
+    > Clicking login button
+    > Dashboard header text: Products
+    > Assertion passed!
+
+>>> [Data-Driven Loop] More records found. Repeating scenario steps...
+
+>>> [Iteration 2/2] Processing next data record
+    > Logged out from previous user
+    > Entering username: visual_user
+    > Entering password: secret_sauce
+    > Clicking login button
+    > Dashboard header text: Products
+    > Assertion passed!
+
+>>> All test data records have been processed successfully!
+
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+
+
+═════════════════════════════════════════════════════════════════════════════
+This file should have everything you need to implement and modify the
+data-driven looping mechanism! 🎉
+═════════════════════════════════════════════════════════════════════════════

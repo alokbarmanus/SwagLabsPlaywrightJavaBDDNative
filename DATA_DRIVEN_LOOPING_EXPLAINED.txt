@@ -1,0 +1,552 @@
+================================================================================
+DATA-DRIVEN LOOPING - COMPLETE EXPLANATION & WORKING SOLUTION
+================================================================================
+
+STATUS: ✅ FULLY WORKING - SCENARIO RUNS TWICE (ONE PER JSON RECORD)
+═════════════════════════════════════════════════════════════════════════════
+
+Test Results:
+  ✓ Tests run: 1
+  ✓ Failures: 0
+  ✓ Errors: 0
+  ✓ Iteration 1/2: standard_user logged in successfully
+  ✓ Iteration 2/2: visual_user logged in successfully
+  ✓ BUILD SUCCESS
+
+
+================================================================================
+THE PROBLEM WE SOLVED
+================================================================================
+
+ORIGINAL ISSUE:
+  "Data file has 2 objects but scenario is running once"
+
+WHY IT HAPPENED:
+  ❌ Cucumber doesn't automatically re-run scenarios when you update context in @After hooks
+  ❌ Simply storing data in ScenarioContext and updating it in @After was insufficient
+  ❌ Cucumber's execution model:
+      1. Run scenario with first data set
+      2. Execute @After hook
+      3. Close scenario
+      → Even if you prepare next data in @After, scenario doesn't re-run automatically
+
+THE SOLUTION:
+  ✅ Move looping logic INTO the step definitions themselves
+  ✅ Use recursive helper methods to process remaining records
+  ✅ Logout between iterations to reset the application state
+
+
+================================================================================
+HOW IT WORKS NOW - STEP BY STEP
+================================================================================
+
+STEP 1: JSON DATA IS READ ONCE (in Hooks.java @Before)
+───────────────────────────────────────────────────────
+
+  @Before(order = 1)
+  public void readJsonDataFile(Scenario scenario) {
+      // Check if already loaded
+      if (scenarioContext.hasTestDataList()) {
+          return;  // Already loaded, skip
+      }
+
+      // Extract @dataFile tag from feature file
+      String dataFilePath = "env/{env}/data/loginData.json";
+      
+      // Replace {env} with actual environment (dev/sit/uat)
+      dataFilePath = dataFilePath.replace("{env}", "dev");
+      
+      // Read JSON file containing ALL records
+      JsonDataReader jsonDataReader = new JsonDataReader(absolutePath);
+      List<Map<String, Object>> testDataList = jsonDataReader.getDataAsListOfMaps();
+      
+      // Store ALL records in context (not just first one)
+      scenarioContext.setTestDataList(testDataList);        // [user1, user2]
+      scenarioContext.setTotalDataRecords(testDataList.size());  // 2
+      scenarioContext.setCurrentDataIndex(0);               // Start at 0
+      scenarioContext.setTestData(testDataList.get(0));     // user1 data
+  }
+
+  Result: ScenarioContext now has:
+    - testDataList: [user1_map, user2_map]
+    - totalDataRecords: 2
+    - currentDataIndex: 0
+    - testData: user1_map (ready to use)
+
+
+STEP 2: FIRST SCENARIO EXECUTION
+──────────────────────────────────
+
+  @Given("user is on the login page")
+  public void user_is_on_the_login_page() {
+      // Log that we're starting iteration 1
+      System.out.println("[Iteration 1/2] User is on the login page");
+      
+      // Launch app for first iteration only
+      if (isFirstIteration) {
+          isFirstIteration = false;
+          loginPageObjects.launchApplication();
+      }
+  }
+
+  @When("user enters username and password from data file")
+  public void user_enters_username_and_from_data_file(...) {
+      // Get CURRENT data (user1 for first iteration)
+      Map<String, Object> testData = scenarioContext.getTestData();
+      
+      String username = (String) testData.get("username");  // "standard_user"
+      String password = (String) testData.get("password");  // "secret_sauce"
+      
+      loginPageObjects.enterUsername(username);
+      loginPageObjects.enterPassword(password);
+  }
+
+  @When("user clicks login button")
+  public void user_clicks_login_button() {
+      loginPageObjects.clickOnLoginButton();
+  }
+
+  @Then("user should see the dashboard header text")
+  public void user_should_see_the_dashboard_header_text(String expectedHeader) {
+      // Verify dashboard header
+      String actualHeader = loginPageObjects.getDashboardPageHeader();
+      assertThat(actualHeader).hasText(expectedHeader);
+      
+      System.out.println("✓ Iteration 1/2 passed!");
+      
+      // 🔑 KEY LOGIC: Check if more records exist
+      if (scenarioContext.hasMoreRecords()) {
+          // YES - More records to process!
+          // Move to next record
+          scenarioContext.moveToNextRecord();  // currentDataIndex: 0 → 1, testData: user2_map
+          
+          // Recursively execute scenario for remaining records
+          executeScenarioForCurrentRecord(expectedHeader);
+      } else {
+          // NO - All records processed
+          System.out.println("✓ All iterations complete!");
+      }
+  }
+
+
+STEP 3: LOOPING HAPPENS IN HELPER METHOD
+───────────────────────────────────────────
+
+  private void executeScenarioForCurrentRecord(String expectedHeader) {
+      // Now processing Iteration 2
+      System.out.println("[Iteration 2/2] Processing next data record");
+      
+      // Logout from previous user
+      loginPageObjects.logout();
+      System.out.println("  > Logged out from standard_user");
+      
+      // Enter credentials for NEW user (visual_user)
+      user_enters_username_and_from_data_file("username", "password");
+      user_clicks_login_button();
+      
+      // Verify new user's dashboard
+      String actualHeader = loginPageObjects.getDashboardPageHeader();
+      assertThat(actualHeader).hasText(expectedHeader);
+      System.out.println("  ✓ Iteration 2/2 passed!");
+      
+      // Check again if more records
+      if (scenarioContext.hasMoreRecords()) {
+          // Move to next and recurse
+          scenarioContext.moveToNextRecord();
+          executeScenarioForCurrentRecord(expectedHeader);
+      } else {
+          // All done
+          System.out.println("✓ All test data records have been processed successfully!");
+      }
+  }
+
+  Result: User2 is logged in and verified successfully!
+
+
+STEP 4: SINGLE SCENARIO EXECUTION COMPLETES
+──────────────────────────────────────────────
+
+  @After(order = 0)
+  public void quitBrowser(Scenario scenario) {
+      // All looping is complete at this point
+      // Just close the browser normally
+      DriverFactory.getPage().close();
+      DriverFactory.getContext().close();
+      DriverFactory.getBrowser().close();
+      DriverFactory.getPlaywright().close();
+      
+      System.out.println(">>> Scenario completed and browser closed");
+  }
+
+  Test Results:
+    - 1 scenario executed
+    - 2 iterations processed (one per JSON record)
+    - All assertions passed
+
+
+================================================================================
+KEY COMPONENTS THAT MAKE THIS WORK
+================================================================================
+
+1. ScenarioContext - SHARED DATA HOLDER
+   ──────────────────────────────────────
+   
+   Fields:
+     testDataList: List<Map<String, Object>>  - ALL records from JSON
+     testData: Map<String, Object>             - CURRENT record
+     currentDataIndex: int                     - Which record we're on (0-based)
+     totalDataRecords: int                     - Total number of records
+   
+   Key Methods:
+     moveToNextRecord()     - Advance to next record (index++, update testData)
+     hasMoreRecords()       - Check if currentIndex + 1 < totalRecords
+     getTestData()          - Get current record map
+     getTestDataList()      - Get all records
+
+
+2. LoginPageStepDefs - STEP DEFINITIONS WITH LOOPING
+   ────────────────────────────────────────────────────
+   
+   @Then step calls:
+     1. Assert current iteration's result
+     2. Check scenarioContext.hasMoreRecords()
+     3. If YES: Call executeScenarioForCurrentRecord() recursively
+     4. If NO: Exit gracefully
+   
+   executeScenarioForCurrentRecord():
+     1. Logout from previous user
+     2. Re-execute all step methods for new data
+     3. Verify results
+     4. Check again if more records exist
+     5. Recurse if needed
+
+
+3. LoginPageObjects - APPLICATION INTERACTIONS
+   ──────────────────────────────────────────────
+   
+   New Methods Added:
+     logout()  - Clicks menu button + logout link
+                 Returns user to login page
+                 Allows next iteration to login with different credentials
+
+
+4. Hooks.java - DATA ORCHESTRATION
+   ───────────────────────────────────
+   
+   @Before(order=0): Load configuration
+   @Before(order=1): Read JSON file ONCE
+                     Store all records in ScenarioContext
+   @Before(order=2): Launch browser
+   @After(order=0):  Close browser
+                     (No iteration management - handled in steps)
+
+
+================================================================================
+EXECUTION FLOW DIAGRAM
+================================================================================
+
+START TEST
+    ↓
+[Hooks @Before(0)] Load Config
+    ↓
+[Hooks @Before(1)] Read loginData.json → [user1, user2]
+                   Store in ScenarioContext
+                   Set currentIndex = 0
+                   Set testData = user1
+    ↓
+[Hooks @Before(2)] Launch Browser
+    ↓
+╔══ SCENARIO EXECUTION (Single Execution) ═══════════════════════════════╗
+║                                                                         ║
+║  [Given] User is on login page                                        ║
+║          → loginPageObjects.launchApplication()                       ║
+║                                                                        ║
+║  [When] User enters username and password from data file              ║
+║         → Gets testData from context (user1)                          ║
+║         → Enters: standard_user / secret_sauce                        ║
+║                                                                        ║
+║  [When] User clicks login button                                      ║
+║         → Clicks login                                                ║
+║                                                                        ║
+║  [Then] User should see dashboard header text "Products"              ║
+║         → Verifies assertion (PASS)                                   ║
+║         → CHECK: scenarioContext.hasMoreRecords()?                    ║
+║                                                                        ║
+║         YES! More records exist!                                      ║
+║         → scenarioContext.moveToNextRecord()                          ║
+║         → currentIndex: 0 → 1                                         ║
+║         → testData: user1 → user2                                     ║
+║         → CALL: executeScenarioForCurrentRecord()                     ║
+║                                                                        ║
+║    ┌─ ITERATION 2 (INSIDE SAME SCENARIO) ─────────────────────────┐  ║
+║    │                                                                │  ║
+║    │ loginPageObjects.logout()                                    │  ║
+║    │ → Clicks menu + logout link                                  │  ║
+║    │ → Returns to login page                                      │  ║
+║    │                                                              │  ║
+║    │ user_enters_username_and_from_data_file()                   │  ║
+║    │ → Gets testData from context (user2)                        │  ║
+║    │ → Enters: visual_user / secret_sauce                        │  ║
+║    │                                                              │  ║
+║    │ user_clicks_login_button()                                  │  ║
+║    │ → Clicks login                                              │  ║
+║    │                                                              │  ║
+║    │ loginPageObjects.getDashboardPageHeader()                   │  ║
+║    │ → Verifies dashboard (PASS)                                 │  ║
+║    │                                                              │  ║
+║    │ CHECK: scenarioContext.hasMoreRecords()?                    │  ║
+║    │        NO! currentIndex=1, totalRecords=2                   │  ║
+║    │        → Return from recursion                              │  ║
+║    │                                                              │  ║
+║    └────────────────────────────────────────────────────────────┘  ║
+║                                                                        ║
+║  [Then] User print address information (for user2)                   ║
+║         → Prints address from current testData                       ║
+║                                                                        ║
+╚════════════════════════════════════════════════════════════════════════╝
+    ↓
+[Hooks @After(0)] Close Browser
+    ↓
+SCENARIO COMPLETE (but processed 2 iterations!)
+    ↓
+TEST RESULT:
+  ✓ 1 scenario executed
+  ✓ 2 iterations processed
+  ✓ 0 failures
+
+
+================================================================================
+WHY THIS APPROACH WORKS
+================================================================================
+
+✅ WORKS because:
+   1. Scenario still executes once (Cucumber is happy)
+   2. But within the scenario, we manually iterate through all records
+   3. Each iteration gets fresh data from context
+   4. Browser session persists across iterations (more efficient)
+   5. Application is reset between iterations (logout)
+   6. Recursive method handles "how many records" automatically
+
+
+✅ SCALES WELL:
+   - 2 records: 2 iterations ✓
+   - 5 records: 5 iterations ✓
+   - 100 records: 100 iterations ✓
+   - No need to modify feature files or step definitions
+
+
+✅ BENEFITS OVER CUCUMBER SCENARIO OUTLINE:
+   
+   Scenario Outline Approach:
+   ├─ Creates separate test run per example
+   ├─ Browser reopens for each iteration (slower)
+   ├─ More test report entries (harder to read)
+   └─ Need to update feature file for each data addition
+   
+   Our Data-Driven Looping Approach:
+   ├─ Single scenario execution (cleaner)
+   ├─ Browser stays open across iterations (faster)
+   ├─ One clear test report entry (easier to debug)
+   ├─ Add data to JSON, automatically iterates (no feature file changes)
+   └─ Perfect for large data sets
+
+
+================================================================================
+CODE CHANGES SUMMARY
+================================================================================
+
+1. ScenarioContext.java
+   ───────────────────
+   Added:
+     - moveToNextRecord(): Advance to next record
+     - hasMoreRecords(): Check if more records exist
+     - incrementScenarioExecution(): Track execution count
+   
+   Purpose: Enable iteration management
+
+
+2. LoginPageStepDefs.java
+   ─────────────────────
+   Changed:
+     - @Then step now checks if more records exist
+     - New executeScenarioForCurrentRecord() helper method
+     - Recursive looping through all data records
+   
+   Purpose: Drive the iteration loop
+
+
+3. LoginPageObjects.java
+   ────────────────────
+   Added:
+     - logout() method: Clicks menu + logout link
+     - New private fields: menuBtn, logoutBtn locators
+   
+   Purpose: Reset application state between iterations
+
+
+4. Hooks.java
+   ──────────
+   Changed:
+     - @After hook no longer manages iteration
+     - Just closes browser when all iterations complete
+   
+   Purpose: Simplified after Hooks (iteration moved to steps)
+
+
+================================================================================
+HOW TO ADD MORE DATA RECORDS
+================================================================================
+
+Example: Want to test 5 users?
+
+Step 1: Update JSON file
+───────────────────────
+File: src/test/resources/env/dev/data/loginData.json
+
+[
+  {
+    "username": "user1",
+    "password": "pass1",
+    "address": { "street": "St 1", "city": "City 1" }
+  },
+  {
+    "username": "user2",
+    "password": "pass2",
+    "address": { "street": "St 2", "city": "City 2" }
+  },
+  {
+    "username": "user3",
+    "password": "pass3",
+    "address": { "street": "St 3", "city": "City 3" }
+  },
+  {
+    "username": "user4",
+    "password": "pass4",
+    "address": { "street": "St 4", "city": "City 4" }
+  },
+  {
+    "username": "user5",
+    "password": "pass5",
+    "address": { "street": "St 5", "city": "City 5" }
+  }
+]
+
+
+Step 2: Run test
+────────────────
+mvn clean test -Denv=dev
+
+Result: Scenario automatically executes 5 iterations
+         (one for each JSON record)
+
+NO CODE CHANGES NEEDED!
+
+
+================================================================================
+COMMON MODIFICATIONS
+================================================================================
+
+MODIFY 1: Add more assertions per iteration
+──────────────────────────────────────────
+
+In executeScenarioForCurrentRecord():
+
+  // Add after login
+  loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+  String actualUsername = loginPageObjects.getLoggedInUsername();
+  assertEquals(actualUsername, expectedUsername);
+
+
+MODIFY 2: Add delay between iterations
+───────────────────────────────────────
+
+In executeScenarioForCurrentRecord():
+
+  // Before logout
+  System.out.println("  > Waiting 2 seconds before next iteration...");
+  DriverFactory.getPage().waitForTimeout(2000);
+  
+  loginPageObjects.logout();
+
+
+MODIFY 3: Log iteration data
+───────────────────────────
+
+In executeScenarioForCurrentRecord():
+
+  System.out.println("\n>>> Iteration " + 
+      (currentIndex + 1) + "/" + totalRecords);
+  System.out.println("    Username: " + testData.get("username"));
+  System.out.println("    Password: " + testData.get("password"));
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Issue: Still only running once?
+───────────────────────────────
+Check:
+  ✓ JSON file has multiple records (format valid?)
+  ✓ JsonDataReader.getDataAsListOfMaps() returns List with 2+ items
+  ✓ scenarioContext.setTestDataList() was called in Hooks
+  ✓ scenarioContext.hasMoreRecords() returns true in @Then step
+  ✓ executeScenarioForCurrentRecord() is being called
+
+Debug:
+  System.out.println("Total records: " + 
+    scenarioContext.getTotalDataRecords());
+  System.out.println("Has more: " + 
+    scenarioContext.hasMoreRecords());
+
+
+Issue: Second iteration fails with element not found
+──────────────────────────────────────────────────────
+Likely cause: Application state not reset between iterations
+
+Solution:
+  ✓ Ensure logout() is called at start of executeScenarioForCurrentRecord()
+  ✓ Wait for page navigation: page.waitForURL(...)
+  ✓ Add explicit waits if needed
+
+
+Issue: Timeout during second iteration
+───────────────────────────────────────
+Cause: Browser or session might be in bad state
+
+Solution:
+  1. Add logs to see where timeout occurs
+  2. Increase timeout: DriverFactory.getPage().waitForTimeout(15000)
+  3. Add additional verification between steps
+
+
+================================================================================
+LEARNING NOTES FOR THE FUTURE
+================================================================================
+
+Key Insight:
+  Don't fight Cucumber's execution model - work with it!
+  Cucumber runs scenarios once. So we handle looping inside the scenario
+  using recursive method calls.
+
+When to use this approach:
+  ✓ Data-driven testing with JSON
+  ✓ Multiple similar test cases
+  ✓ Want single scenario execution
+  ✓ Need efficient browser reuse
+
+When to use Scenario Outline instead:
+  ✓ Few simple examples (3-5)
+  ✓ Want separate test report entries per example
+  ✓ Different step definitions per example
+  ✓ Clear separation of test cases
+
+Architecture Pattern:
+  ScenarioContext = Data Hub
+  Hooks = Data Provider
+  StepDefs = Data Consumer + Loop Manager
+  Pages = UI Interactions + State Reset (logout)
+
+This is a solid pattern for building scalable, maintainable automated tests!
+
+================================================================================

@@ -1,0 +1,367 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║           SCENARIO ITERATION FIX - MULTI-RECORD EXECUTION                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+🔧 THE PROBLEM
+═════════════════════════════════════════════════════════════════════════════
+
+Issue:
+  Scenario was running ONLY ONCE despite having 2 records in JSON file
+  Expected: Scenario runs 2 times (once per JSON record)
+  Actual: Scenario runs 1 time
+
+Root Cause:
+  Cucumber's PicoContainer creates a NEW instance of Hooks for EACH iteration.
+  
+  What happened:
+  ├─ Iteration 1: Hooks instance created, testDataList loaded locally
+  ├─ @After prepared data for next iteration
+  ├─ Iteration 2: NEW Hooks instance created (old one discarded!)
+  │  ├─ testDataList was local variable, not available in new instance
+  │  ├─ @Before(order=1) re-read JSON and reset index to 0
+  │  ├─ Scenario used Record 1 data again instead of Record 2
+  │  └─ @After marked all records as processed (because index was reset)
+  └─ No more iterations (mistakenly thought all records were done)
+
+Why PicoContainer creates new instances:
+  ├─ Cucumber's PicoContainer manages instance lifecycle
+  ├─ By default, it creates a new instance per scenario step
+  ├─ This prevents shared state between iterations
+  └─ Needed for thread-safety in parallel execution
+
+
+✅ THE SOLUTION
+═════════════════════════════════════════════════════════════════════════════
+
+Approach:
+  Move testDataList from Hooks instance variable to ScenarioContext
+  ScenarioContext is injected and persists across Hooks instances
+  
+Changes Made:
+
+1. ScenarioContext.java (Enhanced)
+   ├─ Added: testDataList field (List<Map<String, Object>>)
+   ├─ Added: setTestDataList() method
+   ├─ Added: getTestDataList() method
+   ├─ Added: hasTestDataList() method
+   └─ testDataList now persists across iterations
+
+2. Hooks.java (Updated)
+   ├─ Removed: jsonDataReader instance variable
+   ├─ Removed: testDataList instance variable
+   ├─ Removed: currentDataIndex instance variable
+   ├─ Updated: readJsonDataFile() 
+   │  ├─ Checks scenarioContext.hasTestDataList()
+   │  ├─ Only reads JSON on first iteration
+   │  ├─ Stores testDataList in context
+   │  └─ Uses context for all data storage
+   ├─ Updated: quitBrowser()
+   │  ├─ Retrieves testDataList from context
+   │  ├─ Properly manages iterations
+   │  └─ Continues until all records processed
+   └─ Now works with PicoContainer's new instance per iteration
+
+
+How It Works Now:
+
+Iteration 1: First Hooks instance
+├─ PicoContainer creates: new Hooks(scenarioContext)
+├─ @Before(0): getProperty() - load config
+├─ @Before(1): readJsonDataFile() 
+│  ├─ scenarioContext.hasTestDataList() → false (first time)
+│  ├─ Reads JSON file
+│  ├─ Gets: testDataList = [{user: "standard_user"}, {user: "visual_user"}]
+│  ├─ Stores in context: scenarioContext.setTestDataList(testDataList)
+│  ├─ Sets index to 0
+│  └─ Sets Record 1 in context: {"user": "standard_user"}
+├─ @Before(2): launchBrowser() - start browser
+├─ Scenario steps execute with Record 1 data
+├─ @After(0): quitBrowser()
+│  ├─ Closes browser
+│  ├─ Gets testDataList from context (still has both records!)
+│  ├─ Checks: nextIndex (1) < size (2)? YES
+│  ├─ Sets Record 2 in context: {"user": "visual_user"}
+│  └─ **SCENARIO TRIGGERS RE-RUN**
+└─ First Hooks instance discarded
+
+Iteration 2: NEW Hooks instance (different object, same context!)
+├─ PicoContainer creates: new Hooks(scenarioContext)
+│  └─ Same ScenarioContext instance with testDataList already set!
+├─ @Before(0): getProperty() - load config
+├─ @Before(1): readJsonDataFile()
+│  ├─ scenarioContext.hasTestDataList() → true (already loaded)
+│  ├─ Returns immediately (skips reading JSON again)
+│  └─ Uses testDataList and index from context
+├─ @Before(2): launchBrowser() - new browser
+├─ Scenario steps execute with Record 2 data (from context)
+├─ @After(0): quitBrowser()
+│  ├─ Closes browser
+│  ├─ Gets testDataList from context
+│  ├─ Checks: nextIndex (2) < size (2)? NO
+│  ├─ All records processed
+│  └─ Clears context
+└─ Second Hooks instance discarded
+
+Result: ✅ Scenario ran 2 times, each with different data!
+
+
+📊 DATA PERSISTENCE DIAGRAM
+═════════════════════════════════════════════════════════════════════════════
+
+Before Fix (Scenario ran once):
+┌─────────────────────────────────────────────────────────────┐
+│ Hooks Instance 1                                             │
+│ ┌──────────────────────┐                                     │
+│ │ testDataList (LOCAL) │ ← Discarded when Hooks1 done       │
+│ │ [Record1, Record2]   │                                     │
+│ └──────────────────────┘                                     │
+│ @After: Prepared Record2 in context                          │
+└─────────────────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Hooks Instance 2 (NEW - testDataList lost!)                 │
+│ ┌──────────────────────┐                                     │
+│ │ testDataList (LOCAL) │ ← NULL! Need to re-read JSON       │
+│ │ null                 │                                     │
+│ └──────────────────────┘                                     │
+│ @Before(1): Re-read JSON, reset index to 0                  │
+│ Scenario used Record1 AGAIN (should have been Record2)       │
+└─────────────────────────────────────────────────────────────┘
+
+
+After Fix (Scenario runs twice):
+┌─────────────────────────────────────────────────────────────┐
+│ Hooks Instance 1                                             │
+│ @Before(1): Stores in ScenarioContext:                      │
+│            testDataList = [Record1, Record2]                │
+│            currentDataIndex = 0                              │
+│            testData = {user: "standard_user"}               │
+│                                                              │
+│ @After: Updates ScenarioContext:                            │
+│        currentDataIndex = 1                                  │
+│        testData = {user: "visual_user"}                     │
+└─────────────────────────────────────────────────────────────┘
+                        │
+             ScenarioContext PERSISTS!
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Hooks Instance 2 (NEW - but context intact!)               │
+│ @Before(1): Checks hasTestDataList() → true                │
+│            Uses testDataList from context                    │
+│            Uses currentDataIndex=1 from context             │
+│            Uses testData (Record2) from context              │
+│                                                              │
+│ Scenario executes with Record 2 data                        │
+│                                                              │
+│ @After: Checks more records? nextIndex(2) < size(2)? NO     │
+│        All done - clears context                            │
+└─────────────────────────────────────────────────────────────┘
+
+Result: ScenarioContext shared across Hooks instances ✓
+
+
+🎯 KEY CHANGES SUMMARY
+═════════════════════════════════════════════════════════════════════════════
+
+ScenarioContext.java:
+  + private List<Map<String, Object>> testDataList;
+  + setTestDataList(List<Map<String, Object>> dataList)
+  + getTestDataList()
+  + hasTestDataList()
+
+Hooks.java:
+  - private JsonDataReader jsonDataReader;
+  - private List<Map<String, Object>> testDataList;
+  - private int currentDataIndex;
+  
+  ~ readJsonDataFile():
+    - Check: if (scenarioContext.hasTestDataList()) return;
+    - Store: scenarioContext.setTestDataList(testDataList)
+  
+  ~ quitBrowser():
+    - Get: List<Map<String, Object>> testDataList = scenarioContext.getTestDataList()
+    - Use context instead of instance variables
+
+
+✨ EXPECTED BEHAVIOR NOW
+═════════════════════════════════════════════════════════════════════════════
+
+When you run: mvn test
+
+Console output shows:
+
+>>> Reading JSON data from: ...env/dev/data/loginData.json
+>>> Total test data records: 2
+>>> Setting test data [Record 1 of 2]
+
+[Iteration 1/2] User launched the application
+  > Entering username: standard_user
+  > Entering password: secret_sauce
+  > Clicking login button
+  > Dashboard header text: Products
+  > Assertion passed: Header contains 'Products'
+
+  === Address Information ===
+  Street: 3 Marshall St
+  City: Irvington
+  State: NJ
+  Zip: 07111
+
+>>> Browser closed for iteration 1
+>>> Prepared next test data [Record 2 of 2]
+>>> Scenario will re-run with new data set...
+
+[Iteration 2/2] User launched the application
+  > Entering username: visual_user
+  > Entering password: secret_sauce
+  > Clicking login button
+  > Dashboard header text: Products
+  > Assertion passed: Header contains 'Products'
+
+  === Address Information ===
+  Street: 123 Main St
+  City: Anytown
+  State: CA
+  Zip: 12345
+
+>>> Browser closed for iteration 2
+>>> All test data records processed.
+
+BUILD SUCCESS ✓
+
+
+✅ TESTING THE FIX
+═════════════════════════════════════════════════════════════════════════════
+
+Step 1: Compile updated code
+  mvn clean compile
+
+Step 2: Run tests
+  mvn test
+
+Step 3: Verify output
+  ✓ See "[Iteration 1/2]" in logs
+  ✓ See "[Iteration 2/2]" in logs
+  ✓ See different usernames (standard_user vs visual_user)
+  ✓ See different addresses (Irvington vs Anytown)
+  ✓ See "All test data records processed"
+  ✓ BUILD SUCCESS
+
+Step 4: Extend test data
+  Add 3rd record to loginData.json:
+  {
+    "username": "problem_user",
+    "password": "secret_sauce",
+    "address": {...}
+  }
+  
+  Run tests again:
+  ✓ Should see "[Iteration 1/3]", "[Iteration 2/3]", "[Iteration 3/3]"
+  ✓ Should process all 3 records
+
+
+🔍 HOW THE FIX ENABLES MULTIPLE ITERATIONS
+═════════════════════════════════════════════════════════════════════════════
+
+Key Insight: ScenarioContext Persistence
+
+Cucumber PicoContainer lifecycle:
+├─ Creates new Hooks instance per scenario iteration
+├─ BUT injects the SAME ScenarioContext instance
+└─ So data stored in context persists!
+
+Example with 3 records:
+
+Hooks Instance 1:
+├─ Reads JSON: [{record1}, {record2}, {record3}]
+├─ Stores in context (persists)
+├─ @After: Sets index=1, Record 2
+
+Hooks Instance 2 (NEW):
+├─ @Before: Checks if testDataList exists in context → YES!
+├─ Skips re-reading JSON
+├─ Uses index=1, Record 2 from context
+├─ @After: Sets index=2, Record 3
+
+Hooks Instance 3 (NEW):
+├─ @Before: Checks if testDataList exists in context → YES!
+├─ Skips re-reading JSON
+├─ Uses index=2, Record 3 from context
+├─ @After: No more records, done
+
+Result: 3 iterations with different data ✓
+
+
+⚠️ IMPORTANT NOTES
+═════════════════════════════════════════════════════════════════════════════
+
+1. Instance Variables vs Shared Context
+   ├─ Before: testDataList was instance variable (lost between iterations)
+   ├─ After: testDataList in ScenarioContext (shared between iterations)
+   └─ This is why the scenario now runs multiple times
+
+2. Why Hooks Instance is Recreated
+   ├─ Cucumber's PicoContainer manages lifecycle
+   ├─ Creates fresh instance for each scenario step
+   ├─ Prevents state leakage between scenarios
+   ├─ Ensures thread-safety in parallel execution
+   └─ ScenarioContext injection solves this for shared data
+
+3. Dependency Injection Pattern
+   ├─ Constructor injection: public Hooks(ScenarioContext ctx)
+   ├─ PicoContainer passes same context instance
+   ├─ Both Hooks and Steps receive same context
+   └─ This enables proper data sharing
+
+4. Scaling to More Records
+   ├─ Add more objects to JSON array
+   ├─ Same code handles any number of records
+   ├─ Automatically creates new iteration per record
+   └─ No code changes needed
+
+
+📚 FILES MODIFIED
+═════════════════════════════════════════════════════════════════════════════
+
+1. src/main/java/com/qa/utils/ScenarioContext.java
+   ├─ Added: testDataList field
+   ├─ Added: setTestDataList() method
+   ├─ Added: getTestDataList() method
+   ├─ Added: hasTestDataList() method
+   └─ Now stores complete list of records
+
+2. src/main/java/com/qa/hooks/Hooks.java
+   ├─ Removed: Instance variables (testDataList, jsonDataReader, currentDataIndex)
+   ├─ Updated: readJsonDataFile() - uses context for storage
+   ├─ Updated: quitBrowser() - retrieves testDataList from context
+   └─ Now properly supports multi-record execution
+
+
+🎓 LEARNING POINTS
+═════════════════════════════════════════════════════════════════════════════
+
+1. PicoContainer Instance Lifecycle
+   └─ Creates new instances, injects shared dependencies
+
+2. Shared State Pattern
+   └─ Use context objects for data that persists across iterations
+
+3. Data-Driven Testing
+   └─ Store test data in shared context, not local variables
+
+4. Dependency Injection
+   └─ Injected objects live longer than instances created with 'new'
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+Summary:
+  Problem:  Only 1 iteration despite 2 JSON records
+  Cause:    testDataList stored as local variable (lost between iterations)
+  Fix:      Moved testDataList to ScenarioContext (persists)
+  Result:   Scenario now runs once per JSON record ✓
+
+═════════════════════════════════════════════════════════════════════════════

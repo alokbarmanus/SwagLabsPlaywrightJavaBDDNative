@@ -1,0 +1,742 @@
+================================================================================
+JSON DATA DRIVEN TESTING WITH HOOKS - IMPLEMENTATION GUIDE
+================================================================================
+
+OVERVIEW
+--------
+This implementation enables reading test data from a JSON file and automatically 
+running the same Cucumber scenario multiple times - once for each data record in 
+the JSON array. Data is shared between Hooks and Step Definitions using a 
+ScenarioContext class.
+
+
+PROJECT STRUCTURE
+-----------------
+src/main/java/com/qa/
+├── utils/
+│   ├── JsonDataReader.java      (NEW - Reads and parses JSON files)
+│   └── ScenarioContext.java     (NEW - Shares data between Hooks and Steps)
+├── hooks/
+│   └── Hooks.java               (UPDATED - Reads JSON and iterates through data)
+├── pages/
+│   └── LoginPageObjects.java
+└── factory/
+    └── DriverFactory.java
+
+src/test/java/com/qa/
+├── stepDefinitions/
+│   └── LoginPageStepDefs.java   (UPDATED - Gets data from ScenarioContext)
+└── runners/
+    └── TestRunner.java
+
+src/test/resources/
+├── features/
+│   └── LoginPage.feature        (Uses @dataFile tag)
+└── env/
+    └── dev/
+        └── data/
+            └── loginData.json   (Test data - Array of objects)
+
+
+================================================================================
+1. DATA FLOW ARCHITECTURE
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         CUCUMBER SCENARIO START                             │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│            @Before Hook (order=0): getProperty()                            │
+│            - Initializes ConfigReader                                       │
+│            - Loads application.properties                                   │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│            @Before Hook (order=1): readJsonDataFile(Scenario)               │
+│            - Checks for @dataFile tag in scenario                           │
+│            - Extracts file path: env/{env}/data/loginData.json             │
+│            - Resolves {env} to actual environment (e.g., "dev")            │
+│            - Uses JsonDataReader to read JSON file                          │
+│            - Gets List<Map<String, Object>> with all records                │
+│            - Sets FIRST data record in ScenarioContext                      │
+│            - Stores total record count                                      │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│            @Before Hook (order=2): launchBrowser()                          │
+│            - Initializes Playwright browser/page/context                    │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   STEP DEFINITIONS EXECUTE                                  │
+│                                                                              │
+│  Step 1: "user is on the login page"                                       │
+│          - Gets data from ScenarioContext.getTestData()                     │
+│          - Current iteration: 1 of 2                                        │
+│          - Launches application                                             │
+│                                                                              │
+│  Step 2: "user enters username and password from data file"                 │
+│          - Retrieves username from context: "standard_user"                 │
+│          - Retrieves password from context: "secret_sauce"                  │
+│          - Enters credentials into login form                               │
+│                                                                              │
+│  Step 3: "user clicks login button"                                        │
+│          - Clicks the login button                                          │
+│                                                                              │
+│  Step 4: "user should see dashboard header text Products"                  │
+│          - Asserts dashboard displays "Products"                            │
+│                                                                              │
+│  Step 5: "user print address information from address section"              │
+│          - Gets nested address object from context                          │
+│          - Prints: street, city, state, zip                                 │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│            @After Hook (order=0): quitBrowser(Scenario)                     │
+│            - Closes page, context, browser, playwright                      │
+│                                                                              │
+│            ✓ IF MORE DATA RECORDS:                                          │
+│              - Increments currentDataIndex to 1                             │
+│              - Sets NEXT data record in ScenarioContext                     │
+│              - Re-runs entire scenario with new data                        │
+│                                                                              │
+│            ✓ IF LAST RECORD:                                               │
+│              - Clears ScenarioContext                                       │
+│              - All iterations complete - Scenario ends                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+2. HOW TO MARK A SCENARIO FOR DATA-DRIVEN TESTING
+================================================================================
+
+In your Feature file (LoginPage.feature):
+
+    @dataFile:env/{env}/data/loginData.json
+    Scenario Outline: Login with different credentials
+        Given user is on the login page
+        When user enters username "${username}" and "${password}" from data file
+        And user clicks login button
+        Then user should see the dashboard header text "Products"
+        Then user print address information from "${address}" section of the data file
+
+The @dataFile tag tells the Hook:
+- WHERE to find the JSON file: env/{env}/data/loginData.json
+- {env} is replaced with value from application.properties (e.g., "dev", "sit", "uat")
+
+Example resolutions:
+- @dataFile:env/{env}/data/loginData.json with env=dev 
+  → src/test/resources/env/dev/data/loginData.json
+  
+- @dataFile:env/{env}/data/loginData.json with env=sit 
+  → src/test/resources/env/sit/data/loginData.json
+
+
+================================================================================
+3. JSON DATA FILE FORMAT
+================================================================================
+
+Location: src/test/resources/env/dev/data/loginData.json
+
+Format: ARRAY OF OBJECTS (must be an array)
+
+{
+    [
+        {
+            "username": "standard_user",
+            "password": "secret_sauce",
+            "address": {
+                "street": "3 Marshall St",
+                "city": "Irvington",
+                "state": "NJ",
+                "zip": "07111"
+            }
+        },
+        {
+            "username": "visual_user",
+            "password": "secret_sauce",
+            "address": {
+                "street": "123 Main St",
+                "city": "Anytown",
+                "state": "CA",
+                "zip": "12345"
+            }
+        }
+    ]
+}
+
+KEY POINTS:
+✓ Data MUST be an array (square brackets [ ])
+✓ Each element is an object containing test data
+✓ Objects can have simple fields (username, password) OR nested objects (address)
+✓ For nested fields, use dot notation: address.city, address.state, etc.
+✓ Add as many records as needed - each will be processed in sequence
+
+
+================================================================================
+4. SCENARIOCONTEXT - DATA SHARING BETWEEN HOOKS AND STEPS
+================================================================================
+
+Location: src/main/java/com/qa/utils/ScenarioContext.java
+
+PURPOSE:
+Acts as a data holder that Hooks can populate and Steps can consume.
+Cucumber's PicoContainer automatically injects this into both Hooks and Steps.
+
+KEY METHODS:
+
+    setTestData(Map<String, Object> data)
+    └─ Store current test data object in context
+
+    Map<String, Object> getTestData()
+    └─ Retrieve current test data object
+    └─ Returns all fields for the current scenario iteration
+
+    Object getTestDataValue(String fieldName)
+    └─ Get specific value from test data
+    └─ Supports simple names: "username"
+    └─ Supports nested paths: "address.city" (dot notation)
+
+    setCurrentDataIndex(int index)
+    getDataIndex()
+    └─ Track which record is being processed (0-based)
+
+    setTotalDataRecords(int total)
+    getTotalDataRecords()
+    └─ Track total number of records for logging
+
+    isLastRecord()
+    └─ Check if current iteration is the last one
+
+EXAMPLE USAGE IN STEPS:
+
+    public LoginPageStepDefs(ScenarioContext scenarioContext) {
+        this.scenarioContext = scenarioContext;
+    }
+
+    @When("user enters credentials")
+    public void user_enters_credentials() {
+        Map<String, Object> testData = scenarioContext.getTestData();
+        
+        // Get simple field
+        String username = (String) testData.get("username");
+        
+        // Get nested field
+        Map<String, Object> address = (Map<String, Object>) testData.get("address");
+        String city = (String) address.get("city");
+        
+        // Alternative: use dot notation through context
+        String city2 = (String) scenarioContext.getTestDataValue("address.city");
+    }
+
+
+================================================================================
+5. JSONDATAREADER - READING AND PARSING JSON FILES
+================================================================================
+
+Location: src/main/java/com/qa/utils/JsonDataReader.java
+
+PURPOSE:
+Utility class to read JSON files, parse them, and provide convenient access methods.
+
+INITIALIZATION:
+    String filePath = "path/to/loginData.json";
+    JsonDataReader reader = new JsonDataReader(filePath);
+
+KEY METHODS:
+
+    List<Map<String, Object>> getDataAsListOfMaps()
+    └─ Returns all JSON array objects as List of Maps
+    └─ Perfect for iteration in hooks
+    └─ Each Map has all fields from one JSON object
+
+    Map<String, Object> getDataAtIndex(int index)
+    └─ Get specific record by index
+    └─ Returns null if index out of bounds
+
+    Object getValue(Map<String, Object> dataMap, String fieldName)
+    └─ Get value from a specific map
+    └─ Supports dot notation for nested access
+    └─ Example: getValue(dataMap, "address.city")
+
+    Object getNestedValue(Map<String, Object> dataMap, String fieldPath)
+    └─ Explicitly get nested values using dot notation
+    └─ "address.city" → gets city from nested address object
+
+    int getTotalRecords()
+    └─ Returns count of records in the JSON array
+
+    void printAllData()
+    └─ Debug helper - prints all data to console
+
+EXAMPLE USAGE IN HOOKS:
+    
+    JsonDataReader reader = new JsonDataReader("/path/to/loginData.json");
+    List<Map<String, Object>> allData = reader.getDataAsListOfMaps();
+    
+    for (int i = 0; i < allData.size(); i++) {
+        Map<String, Object> record = allData.get(i);
+        String username = (String) record.get("username");
+        String city = (String) reader.getValue(record, "address.city");
+    }
+
+
+================================================================================
+6. HOOKS.JAVA - ORCHESTRATING DATA-DRIVEN EXECUTION
+================================================================================
+
+Location: src/main/java/com/qa/hooks/Hooks.java
+
+FLOW (Important: Order matters!)
+
+@Before(order=0) getProperty()
+├─ Initializes ConfigReader
+└─ Loads application.properties (contains env, base.url, etc.)
+
+@Before(order=1) readJsonDataFile(Scenario scenario)
+├─ Extract @dataFile tag from scenario
+│  └─ Format: @dataFile:env/{env}/data/loginData.json
+├─ Replace {env} placeholder with actual environment
+│  └─ "dev" from application.properties
+├─ Resolve full file path
+│  └─ {projectRoot}/src/test/resources/env/dev/data/loginData.json
+├─ Read JSON file using JsonDataReader
+├─ Get List<Map<String, Object>> with all records
+├─ Store in instance variable: testDataList
+├─ Set FIRST record in ScenarioContext
+│  └─ scenarioContext.setTestData(testDataList.get(0))
+│  └─ scenarioContext.setCurrentDataIndex(0)
+│  └─ scenarioContext.setTotalDataRecords(testDataList.size())
+└─ Log: "Prepared test data [Record 1 of 2]"
+
+@Before(order=2) launchBrowser()
+└─ Initialize Playwright for current iteration
+
+[SCENARIO STEPS EXECUTE]
+
+@After(order=0) quitBrowser(Scenario scenario)
+├─ Close browser, page, context
+├─ Increment index: currentIndex = 0 → 1
+├─ Check if more records: nextIndex (1) < testDataList.size() (2)?
+│  ├─ YES: 
+│  │  ├─ Update ScenarioContext with NEXT data
+│  │  │  └─ scenarioContext.setCurrentDataIndex(1)
+│  │  │  └─ scenarioContext.setTestData(testDataList.get(1))
+│  │  └─ Log: "Prepared test data [Record 2 of 2]"
+│  │  └─ **SCENARIO RE-RUNS** with new data!
+│  │
+│  └─ NO: (Last record processed)
+│     ├─ Clear context
+│     └─ Log: "All test data records processed"
+│        └─ **SCENARIO ENDS**
+
+KEY CONCEPT: Re-running Scenarios
+─────────────────────────────────
+When more data exists:
+1. @After hook sets next data in context
+2. Cucumber framework automatically re-runs the scenario
+3. @Before hooks execute again with fresh data
+4. Steps execute with new data from context
+5. Process repeats until all data is processed
+
+
+================================================================================
+7. STEP DEFINITIONS - CONSUMING DATA
+================================================================================
+
+Location: src/test/java/com/qa/stepDefinitions/LoginPageStepDefs.java
+
+INJECTION:
+Constructor receives ScenarioContext via Cucumber's PicoContainer
+
+    public LoginPageStepDefs(ScenarioContext scenarioContext) {
+        this.scenarioContext = scenarioContext;
+    }
+
+CONSUMING DATA:
+
+    @When("user enters username and password from data file")
+    public void user_enters_username_and_password() {
+        // Get entire test data object
+        Map<String, Object> testData = scenarioContext.getTestData();
+        
+        // Get simple values
+        String username = (String) testData.get("username");
+        String password = (String) testData.get("password");
+        
+        // Use values
+        loginPageObjects.enterUsername(username);
+        loginPageObjects.enterPassword(password);
+        
+        System.out.println("Entered: " + username);
+    }
+
+NESTED DATA:
+
+    @Then("user print address information")
+    public void user_print_address() {
+        Map<String, Object> testData = scenarioContext.getTestData();
+        
+        // Get nested object
+        Map<String, Object> address = (Map<String, Object>) testData.get("address");
+        
+        System.out.println("Street: " + address.get("street"));
+        System.out.println("City: " + address.get("city"));
+        System.out.println("State: " + address.get("state"));
+        System.out.println("Zip: " + address.get("zip"));
+    }
+
+LOGGING ITERATION INFO:
+
+    @Given("user is on the login page")
+    public void user_is_on_login_page() {
+        int currentIndex = scenarioContext.getCurrentDataIndex();
+        int totalRecords = scenarioContext.getTotalDataRecords();
+        
+        System.out.println("Iteration " + (currentIndex + 1) + " of " + totalRecords);
+        
+        loginPageObjects.launchApplication();
+    }
+
+
+================================================================================
+8. EXECUTION FLOW EXAMPLE - TWO DATA RECORDS
+================================================================================
+
+JSON DATA (2 records):
+[
+  {"username": "standard_user", "password": "secret_sauce", ...},
+  {"username": "visual_user", "password": "secret_sauce", ...}
+]
+
+EXECUTION SEQUENCE:
+
+┌─ ITERATION 1 (Record 1) ─────────────────────────────────────────────────┐
+│                                                                             │
+│  @Before(0): getProperty()                                                │
+│  @Before(1): readJsonDataFile()                                           │
+│              - Reads JSON file                                            │
+│              - Sets Record 1 in context: {username: "standard_user", ...}│
+│              - Sets index to 0, total to 2                               │
+│  @Before(2): launchBrowser()                                             │
+│                                                                             │
+│  Given: user is on the login page                                        │
+│         [Iteration 1/2] User launched application                        │
+│                                                                             │
+│  When: user enters username and password from data file                  │
+│        - Gets "standard_user" and "secret_sauce" from context            │
+│        - Enters both values                                              │
+│                                                                             │
+│  When: user clicks login button                                          │
+│        - Clicks button                                                    │
+│                                                                             │
+│  Then: user should see dashboard header text "Products"                  │
+│        - Asserts "Products" displayed                                     │
+│                                                                             │
+│  Then: user print address information                                    │
+│        - Prints Record 1's address                                       │
+│                                                                             │
+│  @After(0): quitBrowser()                                                │
+│             - Closes browser                                              │
+│             - Checks: nextIndex (1) < totalRecords (2)? YES               │
+│             - Sets Record 2 in context                                   │
+│             - Sets index to 1                                             │
+│             - **SCENARIO RE-RUNS**                                        │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─ ITERATION 2 (Record 2) ─────────────────────────────────────────────────┐
+│                                                                             │
+│  @Before(0): getProperty()                                                │
+│  @Before(1): readJsonDataFile()                                           │
+│              - No @dataFile tag found (only runs if tag detected)        │
+│              - Data already in context from previous iteration            │
+│  @Before(2): launchBrowser() [Fresh browser]                            │
+│                                                                             │
+│  Given: user is on the login page                                        │
+│         [Iteration 2/2] User launched application                        │
+│                                                                             │
+│  When: user enters username and password from data file                  │
+│        - Gets "visual_user" and "secret_sauce" from context              │
+│        - Enters both values                                              │
+│                                                                             │
+│  When: user clicks login button                                          │
+│        - Clicks button                                                    │
+│                                                                             │
+│  Then: user should see dashboard header text "Products"                  │
+│        - Asserts "Products" displayed                                     │
+│                                                                             │
+│  Then: user print address information                                    │
+│        - Prints Record 2's address                                       │
+│                                                                             │
+│  @After(0): quitBrowser()                                                │
+│             - Closes browser                                              │
+│             - Checks: nextIndex (2) < totalRecords (2)? NO                │
+│             - Clears context                                              │
+│             - **SCENARIO ENDS**                                           │
+└─────────────────────────────────────────────────────────────────────────┘
+
+CONSOLE OUTPUT:
+───────────────
+>>> Reading JSON data from: D:\...\env\dev\data\loginData.json
+>>> Total test data records: 2
+>>> Setting test data [Record 1 of 2]
+
+[Iteration 1/2] User launched the application
+    > Entering username: standard_user
+    > Entering password: secret_sauce
+    > Clicking login button
+    > Dashboard header text: Products
+    > Assertion passed: Header contains 'Products'
+
+    === Address Information ===
+    Street: 3 Marshall St
+    City: Irvington
+    State: NJ
+    Zip: 07111
+    ========================
+
+>>> Browser closed for iteration 1
+>>> Prepared next test data [Record 2 of 2]
+>>> Scenario will re-run with new data set...
+
+[Iteration 2/2] User launched the application
+    > Entering username: visual_user
+    > Entering password: secret_sauce
+    > Clicking login button
+    > Dashboard header text: Products
+    > Assertion passed: Header contains 'Products'
+
+    === Address Information ===
+    Street: 123 Main St
+    City: Anytown
+    State: CA
+    Zip: 12345
+    ========================
+
+>>> Browser closed for iteration 2
+>>> All test data records processed.
+
+
+================================================================================
+9. ADVANCED: HANDLING DIFFERENT JSON STRUCTURES
+================================================================================
+
+SIMPLE JSON (Only primitive fields):
+────────────────────────────────────
+[
+  {"username": "user1", "password": "pass1"},
+  {"username": "user2", "password": "pass2"}
+]
+
+Access:
+    String username = (String) testData.get("username");
+
+
+NESTED JSON (With complex objects):
+────────────────────────────────────
+[
+  {
+    "username": "user1",
+    "address": {
+      "street": "123 Main St",
+      "city": "Boston"
+    }
+  }
+]
+
+Access nested with casting:
+    Map<String, Object> address = (Map<String, Object>) testData.get("address");
+    String city = (String) address.get("city");
+
+Access nested with dot notation:
+    String city = (String) scenarioContext.getTestDataValue("address.city");
+
+
+ARRAYS WITHIN JSON:
+───────────────────
+[
+  {
+    "username": "user1",
+    "permissions": ["read", "write", "delete"]
+  }
+]
+
+Access:
+    List<Object> permissions = (List<Object>) testData.get("permissions");
+    String firstPerm = (String) permissions.get(0);
+
+
+MIXED COMPLEX STRUCTURE:
+────────────────────────
+[
+  {
+    "username": "user1",
+    "credentials": {
+      "email": "user@example.com",
+      "password": "secret"
+    },
+    "roles": [
+      {"name": "Admin", "permissions": ["read", "write"]},
+      {"name": "User", "permissions": ["read"]}
+    ]
+  }
+]
+
+Access nested values:
+    String email = (String) scenarioContext.getTestDataValue("credentials.email");
+    List<Object> roles = (List<Object>) testData.get("roles");
+
+
+================================================================================
+10. DEPENDENCY INJECTION - CUCUMBER PICOCONTAINER
+================================================================================
+
+How ScenarioContext Gets Injected:
+
+Cucumber uses PicoContainer for dependency injection.
+When it finds multiple classes with @Before/@When/@Then annotations,
+it automatically creates instances and injects dependencies.
+
+In Hooks:
+    public Hooks(ScenarioContext scenarioContext) {
+        this.scenarioContext = scenarioContext;
+    }
+
+In Step Definitions:
+    public LoginPageStepDefs(ScenarioContext scenarioContext) {
+        this.scenarioContext = scenarioContext;
+    }
+
+Both receive the SAME instance of ScenarioContext:
+    Hooks sets data: scenarioContext.setTestData(data)
+    Steps read data: scenarioContext.getTestData()
+
+This is automatic - no configuration needed!
+
+If you need to debug:
+    scenarioContext.printContextData(); // In any method
+
+
+================================================================================
+11. BEST PRACTICES & TIPS
+================================================================================
+
+✓ DO:
+  - Place JSON files in src/test/resources with environment subfolders
+  - Use descriptive field names matching your domain
+  - Include nested objects for related data (address, credentials, etc.)
+  - Use @dataFile tag on any scenario you want parameterized
+  - Add logging at each step for debugging
+  - Test with 2-3 records first before large datasets
+  - Use meaningful data that covers different scenarios
+
+✗ DON'T:
+  - Don't modify testDataList in steps (read-only)
+  - Don't hardcode paths - use {env} placeholder
+  - Don't forget @dataFile tag - scenario won't be parameterized
+  - Don't assume field order in JSON (use field names, not indices)
+  - Don't directly create new ScenarioContext (let Cucumber inject it)
+  - Don't mix Scenario Outline Examples with @dataFile (use one or other)
+
+
+================================================================================
+12. TROUBLESHOOTING
+================================================================================
+
+Issue: "JSON file not found"
+Solution:
+  - Check @dataFile path uses {env} placeholder
+  - Verify file exists at: src/test/resources/env/{env}/data/loginData.json
+  - Check environment value in application.properties
+  - Print absolute path: jsonDataReader is configured to log it
+
+Issue: "ScenarioContext is null"
+Solution:
+  - Ensure constructor injection: public MyClass(ScenarioContext context)
+  - Don't create ScenarioContext manually with 'new'
+  - Let Cucumber's PicoContainer inject it
+
+Issue: "Data is always first record"
+Solution:
+  - Verify @After hook executes (check logs)
+  - Ensure Hook has @After(order=0) annotation
+  - Check testDataList is not null
+  - Verify scenario is re-running (watch console logs)
+
+Issue: "Nested data returns null"
+Solution:
+  - Check JSON structure has nested objects
+  - Use correct path with dot notation: "address.city"
+  - Cast to Map before accessing: Map address = (Map) testData.get("address")
+  - Verify field names match JSON exactly (case-sensitive)
+
+Issue: "First scenario runs but second doesn't"
+Solution:
+  - Check @dataFile tag syntax
+  - Verify multiple records in JSON array
+  - Check @After hook logs show "Prepared next test data"
+  - Increase logging to trace execution flow
+
+
+================================================================================
+13. RUNNING YOUR TESTS
+================================================================================
+
+Command Line (from project root):
+  mvn test -Denv=dev
+
+Maven will:
+  1. Load application.properties (gets env=dev)
+  2. Find and execute TestRunner.java
+  3. Discover LoginPage.feature with @dataFile tag
+  4. Run scenario for each JSON record in dev/data/loginData.json
+
+IDE (TestRunner.java):
+  Right-click → Run As → JUnit Test
+  (Uses env=dev from application.properties by default)
+
+Specific Feature/Scenario:
+  mvn test -Denv=sit -Dgroups=@regression
+  (Runs scenarios with @regression tag using SIT data)
+
+
+================================================================================
+14. SUMMARY
+================================================================================
+
+The implementation consists of 3 key components:
+
+1. JsonDataReader
+   └─ Reads JSON files and converts to Maps for easy access
+   └─ Supports nested objects and dot notation
+
+2. ScenarioContext
+   └─ Holds test data
+   └─ Shared between Hooks and Steps via Cucumber injection
+   └─ Tracks iteration progress (current index, total records)
+
+3. Updated Hooks
+   └─ Reads JSON file on @Before(order=1)
+   └─ Sets first record in ScenarioContext
+   └─ On @After(order=0), sets next record and triggers scenario re-run
+   └─ Process repeats until all records processed
+
+Step Definitions:
+   └─ Receive ScenarioContext via constructor injection
+   └─ Access data via scenarioContext.getTestData()
+   └─ Get values by field name or dot notation
+
+Result: Scenario runs multiple times (once per JSON record)
+        Each iteration uses fresh data from JSON
+        No code duplication needed
+
+
+================================================================================
+End of Documentation
+================================================================================

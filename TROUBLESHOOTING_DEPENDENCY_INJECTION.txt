@@ -1,0 +1,286 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║           TROUBLESHOOTING - DEPENDENCY INJECTION ERROR                      ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+ERROR: CucumberException - Zero-Argument Constructor
+════════════════════════════════════════════════════════════════════════════
+
+FULL ERROR MESSAGE:
+───────────────────
+io.cucumber.core.exception.CucumberException: class com.qa.hooks.Hooks does 
+not have a public zero-argument constructor.
+
+To use dependency injection add an other ObjectFactory implementation such as:
+ * cucumber-picocontainer
+ * cucumber-spring
+ * cucumber-jakarta-cdi
+ * ...etc
+
+Caused by: java.lang.NoSuchMethodException: com.qa.hooks.Hooks.<init>()
+
+
+WHY THIS HAPPENS:
+─────────────────
+
+Your Hooks and StepDefinition classes use Constructor Dependency Injection:
+
+  public Hooks(ScenarioContext scenarioContext) {
+      this.scenarioContext = scenarioContext;
+  }
+
+Cucumber needs a dependency injection framework to handle this.
+By default, Cucumber uses DefaultObjectFactory which requires a zero-argument
+constructor (public Hooks() {}).
+
+Since we have a constructor with parameters, Cucumber cannot instantiate the
+class without a DI framework.
+
+
+THE FIX:
+────────
+
+Add cucumber-picocontainer dependency to pom.xml:
+
+  <dependency>
+      <groupId>io.cucumber</groupId>
+      <artifactId>cucumber-picocontainer</artifactId>
+      <version>${cucumber.version}</version>
+  </dependency>
+
+✅ This has already been added to your pom.xml
+✅ Your pom.xml now has the correct dependency
+
+
+HOW TO APPLY THE FIX:
+─────────────────────
+
+Option 1: Clean Install & Run (RECOMMENDED)
+────────────────────────────────────────
+From project root directory:
+
+  mvn clean install
+  mvn test
+
+This will:
+  1. Delete target/ folder
+  2. Re-download all dependencies (including cucumber-picocontainer)
+  3. Recompile all classes
+  4. Run tests
+
+Option 2: Just Run Tests (if Maven is cached)
+──────────────────────────────────────────
+  mvn test
+
+Option 3: IDE Integration
+────────────────────
+  Right-click project → Maven → Update Project
+  Then run tests
+
+
+VERIFY THE FIX:
+───────────────
+
+Check pom.xml includes:
+  ✓ <version>${cucumber.version}</version> for cucumber-picocontainer
+  ✓ Dependency is inside <dependencies> section
+
+Expected output when tests run:
+  ✓ No "zero-argument constructor" error
+  ✓ Tests execute with multiple iterations
+  ✓ Logs show: ">>> Reading JSON data from:"
+  ✓ Logs show: "[Iteration 1/2]", "[Iteration 2/2]", etc.
+
+
+WHAT CUCUMBER-PICOCONTAINER DOES:
+──────────────────────────────────
+
+When you add this dependency, Cucumber will:
+
+1. Automatically detect classes with @Before, @Given, @When, @Then, @After
+   annotations
+
+2. Look at their constructors and parameters
+
+3. For each parameter (e.g., ScenarioContext):
+   ├─ Check if it has a @Before/@After hook as well
+   ├─ If yes, create a single shared instance
+   ├─ Inject the same instance into all classes that need it
+
+4. This enables:
+   ├─ Hooks sets data: scenarioContext.setTestData(data)
+   ├─ Steps reads data: scenarioContext.getTestData()
+   └─ Both use the SAME instance
+
+
+EXAMPLE DEPENDENCY INJECTION FLOW:
+──────────────────────────────────
+
+Cucumber discovers:
+  ├─ Hooks class (has @Before)
+  ├─ LoginPageStepDefs class (has @When, @Then)
+  └─ ScenarioContext class (no annotations, but needed by both)
+
+Cucumber PicoContainer:
+  ├─ Creates one instance of ScenarioContext
+  ├─ Injects into Hooks constructor: new Hooks(scenarioContext)
+  ├─ Injects into StepDefs constructor: new LoginPageStepDefs(scenarioContext)
+  └─ Both classes share the SAME scenarioContext instance
+
+Result:
+  ✓ Hooks can set data in context
+  ✓ Steps can read data from context
+  ✓ Data persists between hooks and steps
+  ✓ Scenario iteration data is shared correctly
+
+
+ALTERNATIVE SOLUTIONS (NOT RECOMMENDED):
+─────────────────────────────────────────
+
+If you can't use cucumber-picocontainer, you could:
+
+Option 1: Add Zero-Argument Constructor
+  ❌ Not recommended - violates dependency injection pattern
+  └─ public Hooks() { } + parameterized constructor
+  └─ Problem: ScenarioContext won't be injected
+
+Option 2: Use Static Context
+  ❌ Not recommended - causes issues with parallel execution
+  └─ public static ScenarioContext context = new ScenarioContext();
+  └─ Problem: Not thread-safe, can't run tests in parallel
+
+Option 3: Use cucumber-spring or cucumber-jakarta-cdi
+  ⚠️ More complex setup - only if you need Spring/Jakarta CDI
+  └─ Good if your project already uses Spring/Jakarta
+  └─ For BDD Playwright tests, cucumber-picocontainer is simpler
+
+✅ RECOMMENDED: Use cucumber-picocontainer (already done in your pom.xml)
+
+
+VERIFICATION STEPS:
+───────────────────
+
+Step 1: Open pom.xml and find Cucumber dependencies section
+
+  <dependency>
+      <groupId>io.cucumber</groupId>
+      <artifactId>cucumber-picocontainer</artifactId>
+      <version>${cucumber.version}</version>
+  </dependency>
+
+  Should be present between cucumber-java and testng dependencies
+
+Step 2: Run Maven command
+  mvn clean install
+
+  Wait for: "BUILD SUCCESS"
+
+Step 3: Run tests
+  mvn test
+
+  Should see output like:
+  ├─ >>> Reading JSON data from: ...env/dev/data/loginData.json
+  ├─ >>> Total test data records: 2
+  ├─ >>> Setting test data [Record 1 of 2]
+  ├─ [Iteration 1/2] User launched the application
+  └─ ... (more output)
+
+Step 4: If tests still fail
+  ├─ Check Java version: java -version (should be 21+)
+  ├─ Check Maven version: mvn -version (should be 3.6+)
+  ├─ Delete target/ folder: mvn clean
+  ├─ Rebuild: mvn install
+  └─ Try again: mvn test
+
+
+IF PROBLEM PERSISTS:
+────────────────────
+
+1. Verify pom.xml is properly formatted
+   ├─ No XML syntax errors
+   ├─ All tags properly closed
+   ├─ Dependency is inside <dependencies> section
+
+2. Check IDE hasn't cached old pom
+   ├─ IDE → Project → Clean & Build
+   ├─ Force Maven to refresh: mvn -U clean install
+
+3. Verify no conflicts
+   ├─ Run: mvn dependency:tree
+   ├─ Look for duplicate cucumber-picocontainer entries
+   ├─ Remove duplicates if found
+
+4. Check internet connection
+   ├─ Maven needs to download cucumber-picocontainer
+   ├─ If offline, mvn may fail
+   ├─ Use: mvn clean install -o (if you have cached jars)
+
+5. Last resort
+   ├─ Delete .m2 repository: rm -rf ~/.m2/repository
+   ├─ Run: mvn clean install
+   ├─ Maven will re-download all dependencies
+
+
+COMMON VARIATIONS OF THIS ERROR:
+─────────────────────────────────
+
+Error 1: "does not have a public zero-argument constructor"
+  └─ Solution: Add cucumber-picocontainer ✓
+
+Error 2: "io.cucumber.core.backend.DefaultObjectFactory"
+  └─ Solution: Add cucumber-picocontainer ✓
+
+Error 3: "java.lang.NoSuchMethodException: <init>()"
+  └─ Solution: Add cucumber-picocontainer ✓
+
+All variations are caused by missing DI framework.
+Solution is the same: cucumber-picocontainer ✓
+
+
+AFTER FIX - WHAT TO EXPECT:
+───────────────────────────
+
+When working correctly, you should see:
+
+mvn test output:
+  >>> Reading JSON data from: D:\...\env\dev\data\loginData.json
+  >>> Total test data records: 2
+  >>> Setting test data [Record 1 of 2]
+
+  [Iteration 1/2] User launched the application
+  > Entering username: standard_user
+  > Entering password: secret_sauce
+  > Clicking login button
+  > Dashboard header text: Products
+  > Assertion passed
+
+  >>> Browser closed for iteration 1
+  >>> Prepared next test data [Record 2 of 2]
+
+  [Iteration 2/2] User launched the application
+  > Entering username: visual_user
+  > Entering password: secret_sauce
+  > Clicking login button
+  > Dashboard header text: Products
+  > Assertion passed
+
+  >>> Browser closed for iteration 2
+  >>> All test data records processed
+
+  BUILD SUCCESS
+
+If you see this, the fix worked! ✓
+
+
+SUMMARY:
+────────
+
+Error:  "Zero-argument constructor" from Cucumber
+Cause:  Missing dependency injection framework
+Fix:    Add cucumber-picocontainer to pom.xml
+Status: ✅ Already added in your pom.xml
+Action: Run: mvn clean install && mvn test
+Result: Tests will run with both iterations working correctly
+
+
+═════════════════════════════════════════════════════════════════════════════

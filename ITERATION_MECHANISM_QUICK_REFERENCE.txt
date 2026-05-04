@@ -1,0 +1,391 @@
+================================================================================
+ITERATION MECHANISM - QUICK REFERENCE
+================================================================================
+
+STATUS: ✅ FULLY WORKING - 2 ITERATIONS (ONE PER JSON RECORD)
+═════════════════════════════════════════════════════════════════════════════
+
+
+ONE-PAGE CHEAT SHEET FOR LOOPING MECHANISM
+═══════════════════════════════════════════════════════════════════════════
+
+HOW LOOPING WORKS:
+──────────────────
+
+1. JSON LOAD (Hooks.java @Before)
+   Input:  [user1_data, user2_data]
+   Output: ScenarioContext filled with:
+           - testDataList: [user1, user2]
+           - totalDataRecords: 2
+           - currentDataIndex: 0
+           - testData: user1
+
+2. FIRST ITERATION (Scenario execution)
+   Step 1: @Given → launch app with user1
+   Step 2: @When → enter user1 credentials
+   Step 3: @When → click login
+   Step 4: @Then → verify dashboard
+           THEN: Check if hasMoreRecords() → YES!
+                 Call executeScenarioForCurrentRecord()
+
+3. SUBSEQUENT ITERATIONS (Inside executeScenarioForCurrentRecord)
+   Step 1: logout() from user1
+   Step 2: Re-call all steps for user2
+   Step 3: Verify results
+   Step 4: Check if hasMoreRecords() → NO!
+           Return and complete
+
+4. TEST COMPLETE
+   ✓ Tests run: 1 (single scenario execution)
+   ✓ Iterations: 2 (processed in the scenario)
+   ✓ BUILD: SUCCESS
+
+
+KEY METHODS IN ScenarioContext:
+───────────────────────────────
+
+Method                          Purpose
+──────────────────────────────  ────────────────────────────────────
+hasMoreRecords()                Returns true if next record exists
+moveToNextRecord()              Advance to next record
+getTestData()                   Get current record map
+getTestDataList()               Get all records
+getCurrentDataIndex()           Get current position (0-based)
+getTotalDataRecords()           Get total record count
+
+
+STEP-BY-STEP CODE FLOW:
+───────────────────────
+
+In LoginPageStepDefs.java:
+
+@Then("user should see the dashboard header text \"Products\"")
+public void user_should_see_the_dashboard_header_text(String expectedHeader) {
+    loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+    String actualPageHeader = loginPageObjects.getDashboardPageHeader();
+    assertThat(loginPageObjects.getDashboardPageHeaderLocator())
+        .hasText(expectedHeader);
+    System.out.println("✓ Assertion passed!");
+    
+    // 🔑 THIS IS THE MAGIC:
+    if (scenarioContext.hasMoreRecords()) {
+        System.out.println("More records found!");
+        
+        // Advance to next record
+        scenarioContext.moveToNextRecord();  // currentIndex: 0→1, testData: user1→user2
+        
+        // Call recursive method
+        executeScenarioForCurrentRecord(expectedHeader);
+    } else {
+        System.out.println("All records processed!");
+    }
+}
+
+private void executeScenarioForCurrentRecord(String expectedHeader) {
+    // Logout from previous user
+    loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+    loginPageObjects.logout();  // Reset state
+    
+    // Re-execute steps for new data
+    user_enters_username_and_from_data_file("username", "password");
+    user_clicks_login_button();
+    
+    // Verify
+    loginPageObjects = new LoginPageObjects(DriverFactory.getPage());
+    String actualPageHeader = loginPageObjects.getDashboardPageHeader();
+    assertThat(loginPageObjects.getDashboardPageHeaderLocator())
+        .hasText(expectedHeader);
+    System.out.println("✓ Assertion passed!");
+    
+    // Check again for more records
+    if (scenarioContext.hasMoreRecords()) {
+        scenarioContext.moveToNextRecord();
+        executeScenarioForCurrentRecord(expectedHeader);  // Recurse!
+    } else {
+        System.out.println("All records processed!");
+    }
+}
+
+
+VISUAL FLOW DIAGRAM:
+────────────────────
+
+Test Execution Timeline:
+
+Time  Activity
+────  ─────────────────────────────────────────────────────
+T0    [Hooks] Load config
+T1    [Hooks] Read JSON → [user1, user2]
+T2    [Hooks] Launch browser
+T3    [Scenario] Given → launch app (user1)
+T4    [Scenario] When → enter user1 creds
+T5    [Scenario] When → click login
+T6    [Scenario] Then → verify + check hasMoreRecords()
+             YES! More records!
+             moveToNextRecord() → testData = user2
+             Call executeScenarioForCurrentRecord()
+T7    [ITERATION] logout() from user1
+T8    [ITERATION] Enter user2 credentials
+T9    [ITERATION] Click login
+T10   [ITERATION] Verify dashboard + check hasMoreRecords()
+              NO! All done!
+              Return from recursion
+T11   [Scenario] Then → print address (user2 data)
+T12   [Hooks] Close browser
+T13   [Result] BUILD SUCCESS
+
+
+MINIMAL EXAMPLE:
+────────────────
+
+JSON File:
+[
+  {"username": "user1", "password": "pass1"},
+  {"username": "user2", "password": "pass2"}
+]
+
+Feature File:
+@dataFile:env/{env}/data/loginData.json
+Scenario: Login Test
+  When user enters username and password
+  Then user should see dashboard
+
+Step Definition:
+@When("user enters username and password")
+public void user_enters_credentials() {
+    Map<String, Object> data = scenarioContext.getTestData();
+    String username = (String) data.get("username");
+    
+    enterUsername(username);  // user1 first, then user2
+}
+
+@Then("user should see dashboard")
+public void user_should_see_dashboard() {
+    assertDashboardVisible();
+    
+    if (scenarioContext.hasMoreRecords()) {
+        scenarioContext.moveToNextRecord();
+        executeIteration();
+    }
+}
+
+private void executeIteration() {
+    logout();
+    user_enters_credentials();  // Now uses user2 data
+    user_should_see_dashboard(); // Checks again for more
+}
+
+Result:
+  Iteration 1: user1 login ✓
+  Iteration 2: user2 login ✓
+
+
+COMMON MODIFICATIONS:
+─────────────────────
+
+1. ADD DELAY BETWEEN ITERATIONS:
+   ───────────────────────────────
+   In executeScenarioForCurrentRecord():
+   
+   loginPageObjects.logout();
+   
+   // Wait 2 seconds before next iteration
+   DriverFactory.getPage().waitForTimeout(2000);
+   
+   user_enters_username_and_from_data_file("username", "password");
+
+
+2. LOG ITERATION INFO:
+   ───────────────────
+   In executeScenarioForCurrentRecord():
+   
+   int current = scenarioContext.getCurrentDataIndex() + 1;
+   int total = scenarioContext.getTotalDataRecords();
+   System.out.println("Iteration " + current + "/" + total);
+   
+   Map<String, Object> data = scenarioContext.getTestData();
+   System.out.println("  Username: " + data.get("username"));
+
+
+3. CONDITIONAL LOGOUT:
+   ───────────────────
+   In executeScenarioForCurrentRecord():
+   
+   if (scenarioContext.getCurrentDataIndex() > 0) {
+       // Logout only if not first iteration
+       loginPageObjects.logout();
+   }
+   
+   user_enters_username_and_from_data_file("username", "password");
+
+
+4. ADD ASSERTION BEFORE LOGOUT:
+   ───────────────────────────────
+   In executeScenarioForCurrentRecord():
+   
+   // Verify user specific data before logout
+   String loggedInUser = loginPageObjects.getLoggedInUsername();
+   assertEquals(loggedInUser, expectedUsername);
+   
+   loginPageObjects.logout();
+
+
+5. LIMIT ITERATIONS:
+   ─────────────────
+   In executeScenarioForCurrentRecord():
+   
+   int maxIterations = 3;  // Only run first 3
+   if (scenarioContext.getCurrentDataIndex() < maxIterations - 1
+       && scenarioContext.hasMoreRecords()) {
+       scenarioContext.moveToNextRecord();
+       executeScenarioForCurrentRecord(expectedHeader);
+   }
+
+
+DEBUGGING TIPS:
+───────────────
+
+Add logs to see execution flow:
+
+@Then("user should see the dashboard header text")
+public void user_should_see_dashboard(String expected) {
+    System.out.println("\n[DEBUG] Entering @Then step");
+    System.out.println("  Current Index: " + 
+        scenarioContext.getCurrentDataIndex());
+    System.out.println("  Total Records: " + 
+        scenarioContext.getTotalDataRecords());
+    System.out.println("  Has More: " + 
+        scenarioContext.hasMoreRecords());
+    System.out.println("  Current Data: " + 
+        scenarioContext.getTestData().get("username"));
+    
+    // ... assertion ...
+    
+    if (scenarioContext.hasMoreRecords()) {
+        System.out.println("[DEBUG] Calling executeScenarioForCurrentRecord");
+        scenarioContext.moveToNextRecord();
+        executeScenarioForCurrentRecord(expected);
+    } else {
+        System.out.println("[DEBUG] No more records, exiting");
+    }
+}
+
+
+PERFORMANCE TIPS:
+─────────────────
+
+1. Reuse browser across iterations (already doing this!)
+   → Single browser session for all data
+   → Much faster than opening new browser per record
+
+2. Use page.waitForURL() instead of Thread.sleep()
+   → Waits for actual navigation, not fixed time
+   
+   In logout():
+   page.waitForURL(url -> url.contains("login"));
+
+3. Minimize page reloads
+   → Only navigate to login page once
+   → Use logout/login within same session
+
+4. Add data filtering if needed
+   if (data.get("status").equals("active")) {
+       // Only process active users
+       executeScenarioForCurrentRecord();
+   }
+
+
+LIMITATIONS & WORKAROUNDS:
+──────────────────────────
+
+Limitation: What if iteration fails?
+Solution:   Add try-catch in executeScenarioForCurrentRecord()
+            Log the failure and continue or stop
+
+try {
+    user_enters_username_and_from_data_file(...);
+    user_clicks_login_button();
+    assertDashboard();
+} catch (Exception e) {
+    System.out.println("Iteration failed: " + e.getMessage());
+    // Stop or continue?
+    // throw e;  // Stop on first failure
+}
+
+Limitation: What if I need different steps per record?
+Solution:   Check data type in step definition
+
+@Then("user should see result")
+public void user_should_see_result() {
+    String userType = (String) scenarioContext.getTestData()
+        .get("userType");
+    
+    if ("admin".equals(userType)) {
+        assertAdminDashboard();
+    } else {
+        assertUserDashboard();
+    }
+}
+
+
+FILE REFERENCES:
+────────────────
+
+Code Files:
+  src/main/java/com/qa/utils/ScenarioContext.java
+    → Helper methods: hasMoreRecords(), moveToNextRecord()
+  
+  src/test/java/com/qa/stepDefinitions/LoginPageStepDefs.java
+    → executeScenarioForCurrentRecord() recursive method
+  
+  src/main/java/com/qa/pages/LoginPageObjects.java
+    → logout() method for state reset
+
+Documentation:
+  DATA_DRIVEN_LOOPING_EXPLAINED.txt
+    → Complete technical deep-dive
+  
+  QUICK_START.txt
+    → Step-by-step setup guide
+  
+  This file: ITERATION_MECHANISM_QUICK_REFERENCE.txt
+    → This quick reference
+
+
+WHEN TO USE THIS APPROACH:
+──────────────────────────
+
+✅ USE THIS when:
+   - Testing with 2+ data records
+   - Data varies by record (different users, products, etc.)
+   - Want to reuse browser across iterations
+   - Need single test report entry
+   - Data comes from JSON file
+   - Application has logout/reset mechanism
+
+❌ DON'T USE when:
+   - Single data record only
+   - Using Cucumber Scenario Outline is simpler
+   - Want separate test report per example
+   - Data doesn't vary much
+   - Testing stateless operations
+
+
+SUMMARY:
+════════
+
+The iteration mechanism works by:
+  1. Loading ALL data in Hooks (not just first record)
+  2. Storing data in ScenarioContext
+  3. Executing scenario once with first record
+  4. At end of scenario, checking if more records exist
+  5. If yes, logging out, advancing to next record
+  6. Recursively calling helper method to re-execute steps
+  7. Continuing until all records processed
+
+Result: Single scenario execution with N iterations!
+
+Key insight: Work WITH Cucumber's model (run once) 
+             not against it (trying to re-run scenario)
+
+═════════════════════════════════════════════════════════════════════════════
