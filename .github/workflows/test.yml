@@ -27,7 +27,7 @@ jobs:
         cache: maven
 
     - name: Build project
-      run: mvn clean install -DskipTests
+      run: mvn clean install -DskipTests -Denv=dev
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
